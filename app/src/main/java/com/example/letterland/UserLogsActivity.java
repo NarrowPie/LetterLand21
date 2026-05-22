@@ -28,7 +28,7 @@ public class UserLogsActivity extends AppCompatActivity {
 
         rvLogsList.setLayoutManager(new LinearLayoutManager(this));
 
-        // Initialize Adapter
+        // Initialize Adapter with LogEntry List
         logAdapter = new LogAdapter(this, new ArrayList<>());
         rvLogsList.setAdapter(logAdapter);
 
@@ -38,9 +38,10 @@ public class UserLogsActivity extends AppCompatActivity {
     private void loadDataFromDatabase() {
         AppDatabase db = AppDatabase.getInstance(this);
         new Thread(() -> {
-            List<WordEntry> collectedWords = db.wordDao().getAllWords();
+            // Queries Log entries instead of Almanac table items
+            List<LogEntry> historyLogs = db.logDao().getHistoryLogs();
             runOnUiThread(() -> {
-                logAdapter.updateData(collectedWords);
+                logAdapter.updateData(historyLogs);
             });
         }).start();
     }

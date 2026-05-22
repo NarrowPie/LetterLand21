@@ -10,7 +10,6 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
-import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
@@ -19,15 +18,15 @@ import java.util.Locale;
 public class LogAdapter extends RecyclerView.Adapter<LogAdapter.LogViewHolder> {
 
     private Context context;
-    private List<WordEntry> wordList;
+    private List<LogEntry> logList;
 
-    public LogAdapter(Context context, List<WordEntry> wordList) {
+    public LogAdapter(Context context, List<LogEntry> logList) {
         this.context = context;
-        this.wordList = wordList;
+        this.logList = logList;
     }
 
-    public void updateData(List<WordEntry> newList) {
-        this.wordList = newList;
+    public void updateData(List<LogEntry> newList) {
+        this.logList = newList;
         notifyDataSetChanged();
     }
 
@@ -40,41 +39,31 @@ public class LogAdapter extends RecyclerView.Adapter<LogAdapter.LogViewHolder> {
 
     @Override
     public void onBindViewHolder(@NonNull LogViewHolder holder, int position) {
-        WordEntry wordEntry = wordList.get(position);
-        holder.tvLogWord.setText(wordEntry.word);
+        LogEntry logEntry = logList.get(position);
 
-        if (wordEntry.imagePath != null && !wordEntry.imagePath.isEmpty()) {
-            holder.ivLogImage.setImageURI(Uri.parse(wordEntry.imagePath));
+        // Safely parse the 3-part pipe format: Word|ImagePath|ProfileName
+        String[] parts = logEntry.details.split("\\|");
+        String wordText = parts.length > 0 ? parts[0] : "Unknown Word";
+        String imagePath = parts.length > 1 ? parts[1] : "";
+        String rawProfile = parts.length > 2 ? parts[2] : "Default";
+
+        holder.tvLogWord.setText(wordText);
+
+        if (imagePath != null && !imagePath.isEmpty()) {
+            holder.ivLogImage.setImageURI(Uri.parse(imagePath));
         } else {
             holder.ivLogImage.setImageResource(R.drawable.admin_pic);
         }
 
-        String dateTimeString = "Unknown Date";
-        if (wordEntry.imagePath != null) {
-            try {
-                File file = new File(Uri.parse(wordEntry.imagePath).getPath());
-                if (file.exists()) {
-                    long lastMod = file.lastModified();
-                    SimpleDateFormat sdf = new SimpleDateFormat("MMM dd, yyyy - hh:mm a", Locale.US);
-                    dateTimeString = sdf.format(new Date(lastMod));
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+        // Direct, high-performance date formatting using the log's built-in timestamp
+        SimpleDateFormat sdf = new SimpleDateFormat("MMM dd, yyyy - hh:mm a", Locale.US);
+        String dateTimeString = sdf.format(new Date(logEntry.timestamp));
 
-        // Output configuration matching your requested format rules perfectly:
         String details;
-        String rawProfile = wordEntry.profileName != null ? wordEntry.profileName : "Default";
-
-        if (rawProfile.startsWith("ADMIN|")) {
-            //Extract the actual player name by stripping out the prefix tag string
+        if ("ADMIN ADDED WORD".equals(logEntry.action) || rawProfile.startsWith("ADMIN|")) {
             String actualPlayerName = rawProfile.replace("ADMIN|", "");
-
-            // UPDATED FORMAT: Displays "Added by: Admin to (PlayerName)" cleanly to eliminate any confusion
             details = "Added by: Admin to " + actualPlayerName + "\nDate: " + dateTimeString;
         } else {
-            // Ordinary player collection (Scan / Write gameplay modes)
             details = "Profile: " + rawProfile + "\nDate: " + dateTimeString;
         }
 
@@ -83,7 +72,7 @@ public class LogAdapter extends RecyclerView.Adapter<LogAdapter.LogViewHolder> {
 
     @Override
     public int getItemCount() {
-        return wordList != null ? wordList.size() : 0;
+        return logList != null ? logList.size() : 0;
     }
 
     static class LogViewHolder extends RecyclerView.ViewHolder {

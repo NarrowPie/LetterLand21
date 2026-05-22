@@ -21,11 +21,15 @@ public interface LogDao {
     @Query("UPDATE log_table SET details = REPLACE(details, '|' || :oldName, '|' || :newName) WHERE action = 'DELETED WORD' AND details LIKE '%|' || :oldName")
     void updateProfileNameInDeletedLogs(String oldName, String newName);
 
+    // --- USER LOG QUERY ---
+    @Query("SELECT * FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD') ORDER BY timestamp DESC")
+    List<LogEntry> getHistoryLogs();
+
     // --- MANUAL PURGE QUERIES ---
-    @Query("DELETE FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD')")
+    @Query("DELETE FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD')")
     void deleteHistoryLogs();
 
-    @Query("DELETE FROM log_table WHERE action NOT IN ('ADDED WORD', 'EDITED WORD', 'DELETED WORD')")
+    @Query("DELETE FROM log_table WHERE action NOT IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD', 'DELETED WORD')")
     void deletePlayerActivityLogs();
 
     @Query("DELETE FROM log_table WHERE action = 'DELETED WORD'")
@@ -34,11 +38,11 @@ public interface LogDao {
     // --- AUTOMATIC CONVEYOR BELT QUERIES ---
 
     // Auto-deletes the oldest History Logs (Keeps newest X)
-    @Query("DELETE FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD') AND id NOT IN (SELECT id FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD') ORDER BY timestamp DESC LIMIT :limit)")
+    @Query("DELETE FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD') AND id NOT IN (SELECT id FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD') ORDER BY timestamp DESC LIMIT :limit)")
     void autoPruneHistoryLogs(int limit);
 
     // Auto-deletes the oldest User Logs (Keeps newest X)
-    @Query("DELETE FROM log_table WHERE action NOT IN ('ADDED WORD', 'EDITED WORD', 'DELETED WORD') AND id NOT IN (SELECT id FROM log_table WHERE action NOT IN ('ADDED WORD', 'EDITED WORD', 'DELETED WORD') ORDER BY timestamp DESC LIMIT :limit)")
+    @Query("DELETE FROM log_table WHERE action NOT IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD', 'DELETED WORD') AND id NOT IN (SELECT id FROM log_table WHERE action NOT IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD', 'DELETED WORD') ORDER BY timestamp DESC LIMIT :limit)")
     void autoPrunePlayerActivityLogs(int limit);
 
     // Auto-deletes the oldest Deleted Items (Keeps newest X)

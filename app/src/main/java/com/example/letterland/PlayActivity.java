@@ -415,6 +415,14 @@ public class PlayActivity extends AppCompatActivity {
             WordEntry newEntry = new WordEntry(word, player, file.getAbsolutePath());
             AppDatabase.getInstance(this).wordDao().insert(newEntry);
 
+            // --- 🌟 ADDED USER HISTORY LOG FOR DISCOVERY TRACKING ---
+            try {
+                String logDetails = word + "|" + file.getAbsolutePath() + "|" + player;
+                AppDatabase.getInstance(this).logDao().insertLog(new LogEntry("ADDED WORD", logDetails, System.currentTimeMillis()));
+            } catch (Exception logEx) {
+                logEx.printStackTrace();
+            }
+
             DICTIONARY.add(word);
 
             runOnUiThread(() -> {
@@ -438,7 +446,7 @@ public class PlayActivity extends AppCompatActivity {
         }
     }
 
-    // 🚀 OPTIMIZED FUZZY WORD LANE WITH TIGHT CHARACTER LENGTH FILTER
+    // OPTIMIZED FUZZY WORD LANE WITH TIGHT CHARACTER LENGTH FILTER
     private String findClosestWord(String scannedWord) {
         if (scannedWord == null || scannedWord.isEmpty()) return "";
         if (DICTIONARY.contains(scannedWord)) return scannedWord; // Instant O(1) matching gate
@@ -449,7 +457,7 @@ public class PlayActivity extends AppCompatActivity {
         int scannedLength = scannedWord.length();
 
         for (String dictionaryWord : DICTIONARY) {
-            // 🚀 OPTIMIZATION GATING: If length variance exceeds allowable edit differences,
+            // OPTIMIZATION GATING: If length variance exceeds allowable edit differences,
             // a match is structurally impossible. Bypasses calculations instantly.
             if (Math.abs(scannedLength - dictionaryWord.length()) > maxAllowedDifferences) {
                 continue;

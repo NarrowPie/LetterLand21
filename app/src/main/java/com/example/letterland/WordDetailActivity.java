@@ -101,7 +101,7 @@ public class WordDetailActivity extends AppCompatActivity {
             }
         }
 
-        // 🚀 CRITICAL FIX: Words discovered by kids default to UNSTARRED (false)
+        // CRITICAL FIX: Words discovered by kids default to UNSTARRED (false)
         // Only the Admin Panel can change this flag via the administrative screens!
         if (isNewWord && ("WRITE".equals(sourcePage) || "SCANNER".equals(sourcePage))) {
             new Thread(() -> {
@@ -112,10 +112,19 @@ public class WordDetailActivity extends AppCompatActivity {
                     if (checkExist == null) {
                         WordEntry newEntry = new WordEntry(wordText, player, imagePath);
 
-                        // 🌟 FIXED HERE: Forces default state to false! Child cannot auto-star items anymore.
+                        // FIXED HERE: Forces default state to false! Child cannot auto-star items anymore.
                         newEntry.isStarred = false;
 
                         AppDatabase.getInstance(this).wordDao().insert(newEntry);
+
+                        // --- 🌟 ADDED USER HISTORY LOG FOR DISCOVERY TRACKING ---
+                        try {
+                            String logDetails = wordText + "|" + imagePath + "|" + player;
+                            AppDatabase.getInstance(this).logDao().insertLog(new LogEntry("ADDED WORD", logDetails, System.currentTimeMillis()));
+                        } catch (Exception logEx) {
+                            logEx.printStackTrace();
+                        }
+
                         runOnUiThread(() -> Toast.makeText(this, wordText + " saved to Almanac!", Toast.LENGTH_SHORT).show());
                     }
                 } catch (Exception e) {
@@ -125,7 +134,7 @@ public class WordDetailActivity extends AppCompatActivity {
         }
 
         // ==========================================
-        // 🌟 SMART VISIBILITY LOGIC + UI CENTERING FIX
+        // SMART VISIBILITY LOGIC + UI CENTERING FIX
         // ==========================================
         if ("ALMANAC".equals(sourcePage)) {
             if (llScanControls != null) llScanControls.setVisibility(View.GONE);
@@ -200,7 +209,7 @@ public class WordDetailActivity extends AppCompatActivity {
                 }
 
                 if (wordText != null) {
-                    // 🌟 Convert to lowercase right before passing to TTS to preserve fluent pronunciation
+                    // Convert to lowercase right before passing to TTS to preserve fluent pronunciation
                     String optimizedString = wordText.trim().toLowerCase(Locale.US);
 
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
