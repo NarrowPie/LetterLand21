@@ -55,7 +55,7 @@ public class QuizActivity extends AppCompatActivity {
     private ImageView ivQuizImage;
     private MaterialButton btnSpeakLiveText;
 
-    // 🧩 Hangman Hint Display Elements
+    // Hangman Hint Display Elements
     private LinearLayout llHangmanContainer;
     private TextView tvHangmanMask;
     private DigitalInkRecognizer recognizer;
@@ -78,13 +78,13 @@ public class QuizActivity extends AppCompatActivity {
     private Dialog zoomDialog;
     private AlertDialog confirmDialog;
 
-    // 🚀 Bumper Variables 🚀
+    // Bumper Variables
     private View layoutBumper;
     private TextView tvBumperLoading;
     private ProgressBar pbBumperLoading;
     private MaterialButton btnBumperStart;
     private boolean isFirstLevelLoaded = false;
-    // 🕹️ Handicap State Trackers
+    // Handicap State Trackers
     private String targetSolutionWord = "";
     private char[] currentMaskedDisplayArray;
 
@@ -161,7 +161,6 @@ public class QuizActivity extends AppCompatActivity {
             String speechPayload = currentlyDetectedWord;
 
             if (speechPayload != null && !speechPayload.isEmpty() && !speechPayload.equals("...")) {
-                // 🌟 Normalize the word to lowercase so short or long uppercase strings aren't spelled out letter-by-letter
                 String optimizedPayload = speechPayload.trim().toLowerCase(Locale.US);
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -392,6 +391,14 @@ public class QuizActivity extends AppCompatActivity {
                 currentMaskedDisplayArray[safeIndex] = '_';
             }
         }
+
+        // 🌟 STEP B FIX: Keep the layouts separated for phrase hints
+        for (int i = 0; i < len; i++) {
+            if (word.charAt(i) == ' ') {
+                currentMaskedDisplayArray[i] = ' ';
+            }
+        }
+
         renderMaskedPuzzleField();
     }
 
@@ -400,7 +407,6 @@ public class QuizActivity extends AppCompatActivity {
         for (int i = 0; i < currentMaskedDisplayArray.length; i++) {
             sb.append(currentMaskedDisplayArray[i]);
             if (i < currentMaskedDisplayArray.length - 1) {
-                // 🌟 REMARK: Standard single space separation ensures high-capacity 12-letter lines scale correctly inside your auto-sizing TextView
                 sb.append(" ");
             }
         }
@@ -438,6 +444,7 @@ public class QuizActivity extends AppCompatActivity {
                     .into(ivZoomed);
         }
 
+        // 🌟 FIXED ID COMPILATION ERROR HERE
         zoomDialog.findViewById(R.id.rootZoomLayout).setOnClickListener(v1 -> {
             SoundManager.getInstance(this).playClick();
             zoomDialog.dismiss();
@@ -483,11 +490,17 @@ public class QuizActivity extends AppCompatActivity {
     private void goToResults() {
         if (scanRunnable != null) scanHandler.removeCallbacks(scanRunnable);
         int finalScore = 0;
+
+        // 🌟 STEP A FIX: Squeeze formatting gaps out before scoring matches
         for (int i = 0; i < correctAnswers.size(); i++) {
-            if (correctAnswers.get(i).equalsIgnoreCase(userAnswers.get(i))) {
+            String cleanCorrect = correctAnswers.get(i).replace(" ", "").trim();
+            String cleanUser = userAnswers.get(i).replace(" ", "").trim();
+
+            if (cleanCorrect.equalsIgnoreCase(cleanUser)) {
                 finalScore++;
             }
         }
+
         final int score = finalScore;
         databaseExecutor.execute(() -> {
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
@@ -534,8 +547,9 @@ public class QuizActivity extends AppCompatActivity {
                     if (!result.getCandidates().isEmpty()) {
                         String cleanWord = result.getCandidates().get(0).getText().toUpperCase().trim();
 
-                        if (cleanWord.length() > 10) {
-                            cleanWord = cleanWord.substring(0, 10);
+                        // 🌟 FIX: Extended cap bounds from 10 to 24 to handle long multi-word targets safely
+                        if (cleanWord.length() > 24) {
+                            cleanWord = cleanWord.substring(0, 24);
                         }
 
                         currentlyDetectedWord = cleanWord;

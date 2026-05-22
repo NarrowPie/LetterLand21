@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.text.InputFilter; // 🌟 Added import for text filtering
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.Toast;
@@ -61,15 +62,27 @@ public class AddObjectActivity extends AppCompatActivity {
         etNewWord = findViewById(R.id.etNewWord);
         ivSelectedImage = findViewById(R.id.ivSelectedImage);
 
+        // 🌟 FIX: Limits the physical keyboard input text space length strictly to 13 characters max
+        etNewWord.setFilters(new InputFilter[]{new InputFilter.LengthFilter(13)});
+
         MaterialButton btnCamera = findViewById(R.id.btnCamera);
         MaterialButton btnGallery = findViewById(R.id.btnGallery);
         MaterialButton btnSave = findViewById(R.id.btnSaveObject);
+        // Fixed: Bind directly using the true ID from your activity_add_object.xml file
         MaterialButton btnBack = findViewById(R.id.btnAddObjectBack);
 
-        btnBack.setOnClickListener(v -> {
-            SoundManager.getInstance(this).playClick();
-            finish();
-        });
+        if (btnBack != null) {
+            btnBack.setOnClickListener(v -> {
+                SoundManager.getInstance(this).playClick();
+                finish();
+            });
+        }
+        if (btnBack != null) {
+            btnBack.setOnClickListener(v -> {
+                SoundManager.getInstance(this).playClick();
+                finish();
+            });
+        }
 
         btnCamera.setOnClickListener(v -> {
             SoundManager.getInstance(this).playShutter();
@@ -115,31 +128,37 @@ public class AddObjectActivity extends AppCompatActivity {
             return;
         }
 
+        // 🌟 FIX: Safety fallback clamp to guarantee database column rows never exceed 13 characters
+        if (word.length() > 13) {
+            word = word.substring(0, 13);
+        }
+
         if (selectedBitmap == null) {
             Toast.makeText(this, "Please add an image!", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // 🚀 CRITICAL FIX STEP 1: Fetch the profile value safely
+        // Fetch the profile value safely
         String activePlayer = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "").trim();
 
-        // 🚀 CRITICAL FIX STEP 2: Enforce profile assignment safety check before creating worker loops
+        // Enforce profile assignment safety check before creating worker loops
         if (activePlayer.isEmpty()) {
             Toast.makeText(this, "No active profile! Please select a player profile on the main menu first.", Toast.LENGTH_LONG).show();
             return;
         }
 
         final String player = activePlayer;
+        final String finalizedWord = word;
 
         new Thread(() -> {
             // Verifies if the word already exists under the active child's profile list
-            WordEntry existingWord = AppDatabase.getInstance(this).wordDao().findWordForProfile(word, player);
+            WordEntry existingWord = AppDatabase.getInstance(this).wordDao().findWordForProfile(finalizedWord, player);
             if (existingWord != null) {
                 runOnUiThread(() -> Toast.makeText(this, "This word already exists in the Almanac!", Toast.LENGTH_SHORT).show());
                 return;
             }
 
-            String fileName = "word_" + word + "_" + System.currentTimeMillis() + ".jpg";
+            String fileName = "word_" + finalizedWord + "_" + System.currentTimeMillis() + ".jpg";
             File file = new File(getExternalFilesDir(null), fileName);
 
             try (FileOutputStream out = new FileOutputStream(file)) {
@@ -147,23 +166,23 @@ public class AddObjectActivity extends AppCompatActivity {
                 fixedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, out);
 
                 // Save directly under the validated player name
-                WordEntry newEntry = new WordEntry(word, player, file.getAbsolutePath());
+                WordEntry newEntry = new WordEntry(finalizedWord, player, file.getAbsolutePath());
 
-                // 🚀 BONUS STABILITY TWEAK: Set to true so admin additions appear inside Quiz Mode automatically!
+                // Set to true so admin additions appear inside Quiz Mode automatically!
                 newEntry.isStarred = true;
 
                 AppDatabase.getInstance(this).wordDao().insert(newEntry);
 
                 // Explicitly tracks the admin panel addition inside your custom application audit logger rows
                 try {
-                    String logDetails = word + "|" + file.getAbsolutePath() + "|" + player;
+                    String logDetails = finalizedWord + "|" + file.getAbsolutePath() + "|" + player;
                     AppDatabase.getInstance(this).logDao().insertLog(new LogEntry("ADMIN ADDED WORD", logDetails, System.currentTimeMillis()));
                 } catch (Exception logEx) {
                     logEx.printStackTrace();
                 }
 
                 runOnUiThread(() -> {
-                    Toast.makeText(this, word + " successfully added to " + player + "'s Almanac!", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, finalizedWord + " successfully added to " + player + "'s Almanac!", Toast.LENGTH_LONG).show();
                     finish();
                 });
             } catch (IOException e) {

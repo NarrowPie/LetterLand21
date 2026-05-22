@@ -54,10 +54,13 @@ public class QuizResultActivity extends AppCompatActivity {
 
         if (correctAnswers == null || userAnswers == null) return;
 
-        // Calculate Score
+        // 🌟 STEP A FIX: Squeeze spaces out before calculating final result score display
         int score = 0;
         for (int i = 0; i < correctAnswers.size(); i++) {
-            if (correctAnswers.get(i).equalsIgnoreCase(userAnswers.get(i))) {
+            String cleanCorrect = correctAnswers.get(i).replace(" ", "").trim();
+            String cleanUser = userAnswers.get(i).replace(" ", "").trim();
+
+            if (cleanCorrect.equalsIgnoreCase(cleanUser)) {
                 score++;
             }
         }
@@ -107,7 +110,11 @@ public class QuizResultActivity extends AppCompatActivity {
             holder.tvCorrectWord.setText(correctWord);
             holder.tvUserAnswer.setText(userWord);
 
-            if (correctWord.equalsIgnoreCase(userWord)) {
+            // 🌟 STEP A FIX: Squeeze spaces out before tinting card backgrounds green/red
+            String cleanCorrect = correctWord.replace(" ", "").trim();
+            String cleanUser = userWord.replace(" ", "").trim();
+
+            if (cleanCorrect.equalsIgnoreCase(cleanUser)) {
                 holder.cardItem.setCardBackgroundColor(Color.parseColor("#4CAF50")); // Green for correct
             } else {
                 holder.cardItem.setCardBackgroundColor(Color.parseColor("#EF5350")); // Red for wrong
@@ -119,7 +126,7 @@ public class QuizResultActivity extends AppCompatActivity {
             return correct.size();
         }
 
-        // --- Inner ViewHolder Class (This fixes the red errors) ---
+        // --- Inner ViewHolder Class ---
         class ResultViewHolder extends RecyclerView.ViewHolder {
             TextView tvCorrectWord, tvUserAnswer;
             MaterialCardView cardItem;
