@@ -74,6 +74,7 @@ public class WriteActivity extends AppCompatActivity {
 
     // ⏳ Tracking fields to safely handle button spam clicks exclusively
     private boolean isButtonSpamLocked = false;
+    private boolean isProceedingLocked = false; // 🌟 SPAM GUARD FIXED: Prevents double thread loops
     private final Handler spamHandler = new Handler(Looper.getMainLooper());
 
     private final ActivityResultLauncher<String> requestPermissionLauncher = registerForActivityResult(
@@ -243,9 +244,14 @@ public class WriteActivity extends AppCompatActivity {
 
         btnProceed.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
+            if (isProceedingLocked) { // 🌟 BLOCK ACTION IF THREAD RUNNING
+                return;
+            }
+
             if (currentlyDetectedWord.isEmpty() || currentlyDetectedWord.equals("...")) {
                 Toast.makeText(this, "Write clearly first!", Toast.LENGTH_SHORT).show();
             } else {
+                isProceedingLocked = true; // Lock immediately to protect thread safety
                 checkWordDatabase(currentlyDetectedWord);
             }
         });
@@ -375,7 +381,16 @@ public class WriteActivity extends AppCompatActivity {
                 .addOnSuccessListener(result -> {
                     if (isFinishing() || isDestroyed() || result.getCandidates().isEmpty()) return;
 
-                    String cleanWord = result.getCandidates().get(0).getText().toUpperCase().trim();
+                    String rawText = result.getCandidates().get(0).getText().toUpperCase().trim();
+
+                    // 🌟 HARD PROTECTION CHECK: Strip out numbers, symbols, spaces cleanly
+                    String cleanWord = rawText.replaceAll("[^A-Z]", "");
+
+                    if (cleanWord.isEmpty()) {
+                        tvLiveText.setText("...");
+                        currentlyDetectedWord = "";
+                        return;
+                    }
 
                     // 🌟 PROTECTIVE CAP ENFORCED: Strict 12-letter limit bounds applied seamlessly
                     if (cleanWord.length() > 12) {
@@ -491,6 +506,10 @@ public class WriteActivity extends AppCompatActivity {
             String verifiedWord = rawVoiceOutputBuffer.isEmpty() ? "MIC" : rawVoiceOutputBuffer;
             voiceDialog.dismiss();
 
+            // Strip numeric symbols from incoming voice assist fallback text configurations too
+            verifiedWord = verifiedWord.replaceAll("[^A-Z]", "");
+            if(verifiedWord.isEmpty()) verifiedWord = "MIC";
+
             isVoiceInputActive = true;
             currentlyDetectedWord = verifiedWord;
             tvLiveText.setText(verifiedWord);
@@ -546,6 +565,7 @@ public class WriteActivity extends AppCompatActivity {
             WordEntry savedWord = AppDatabase.getInstance(this).wordDao().findWordForProfile(processedWord, player);
 
             runOnUiThread(() -> {
+                isProceedingLocked = false; // 🌟 UNLOCK ONCE THREAD FINISHES ON UI
                 if (isFinishing() || isDestroyed()) return;
                 if (savedWord != null) {
                     Intent intent = new Intent(WriteActivity.this, WordDetailActivity.class);
@@ -632,12 +652,14 @@ public class WriteActivity extends AppCompatActivity {
         lastSpokenLetter = "";
         lastSpokenWordLength = 0;
         isVoiceInputActive = false;
+        isProceedingLocked = false; // 🌟 Reset guard lock state
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         SoundManager.getInstance(this).startBackgroundMusic();
+        isProceedingLocked = false; // 🌟 Reset block on screen return
     }
 
     @Override
