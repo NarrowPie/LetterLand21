@@ -98,8 +98,11 @@ public class MainActivity extends AppCompatActivity {
                 Set<String> newProfiles = new HashSet<>();
                 newProfiles.add(newName);
 
-                prefs.edit().putStringSet("ALL_PROFILES", newProfiles).apply();
-                prefs.edit().putString("ACTIVE_PROFILE", newName).apply();
+                // FIXED: Batched into a single unified transaction block to remove duplicate file disk calls
+                prefs.edit()
+                        .putStringSet("ALL_PROFILES", newProfiles)
+                        .putString("ACTIVE_PROFILE", newName)
+                        .apply();
 
                 databaseExecutor.execute(() -> {
                     LogEntry log = new LogEntry("PLAYER_LOG", "ADDED|" + newName, System.currentTimeMillis());
@@ -234,7 +237,8 @@ public class MainActivity extends AppCompatActivity {
         }
 
         builder.setNegativeButton("Exit", (dialog, which) -> {
-            finishAffinity();
+            // FIXED: Replaced finishAffinity() with finish() to preserve standard root activity lifecycle exits cleanly
+            finish();
         });
 
         rationaleDialog = builder.create();
@@ -278,9 +282,14 @@ public class MainActivity extends AppCompatActivity {
         TextView tvQuizHint = view.findViewById(R.id.tvQuizUnlockHint);
         if (btnQuiz != null && tvQuizHint != null) {
             btnQuiz.setEnabled(false);
+
+            // FIXED: Capture an unchangeable snapshot string value *before* executing the asynchronous thread
+            final String threadSafePlayerProfile = prefs.getString("ACTIVE_PROFILE", "Default");
+
             databaseExecutor.execute(() -> {
-                String player = prefs.getString("ACTIVE_PROFILE", "Default");
-                int wordCount = AppDatabase.getInstance(MainActivity.this).wordDao().getAllWordsForProfile(player).size();
+                // Read from our safe locked snapshot value rather than polling fluctuating UI state inside a thread worker
+                java.util.List<?> profileWords = AppDatabase.getInstance(MainActivity.this).wordDao().getAllWordsForProfile(threadSafePlayerProfile);
+                int wordCount = (profileWords != null) ? profileWords.size() : 0; // Guard against NullPointer safety bugs
 
                 runOnUiThread(() -> {
                     if (wordCount >= 10) {
@@ -334,7 +343,8 @@ public class MainActivity extends AppCompatActivity {
         view.findViewById(R.id.btnConfirmExit).setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
             exitDialog.dismiss();
-            finishAffinity();
+            // FIXED: Changed to finish() for clean termination modeling
+            finish();
         });
     }
 
