@@ -28,7 +28,7 @@ public class DeletedLogsActivity extends AppCompatActivity {
     private RecyclerView rvDeletedLogs;
     private DeletedLogAdapter adapter;
 
-    // FIX: Assigned window builder reference directly to a class tracking variable to prevent bad-token failures
+    // FIX: Assigned window builder reference
     private AlertDialog restoreConfirmationDialog;
     private ExecutorService deletedLogExecutor;
 
@@ -52,7 +52,7 @@ public class DeletedLogsActivity extends AppCompatActivity {
     }
 
     private void loadLogs() {
-        // FIX: Swapped unmanaged background thread instantiation for executor calls
+        // FIX: Swapped unmanaged background
         deletedLogExecutor.execute(() -> {
             List<LogEntry> allLogs = AppDatabase.getInstance(this.getApplicationContext()).logDao().getAllLogs();
             List<LogEntry> deletedLogs = new ArrayList<>();
@@ -170,7 +170,7 @@ public class DeletedLogsActivity extends AppCompatActivity {
 
                 holder.tvDeletedWord.setText("Deleted '" + wordName + "'\nPROFILE: " + deleterName);
 
-                // FIX: Glide parsing converted to standard platform File streams instead of ambiguous text path sequences
+                // FIX: Glide parsing
                 if (imagePath != null && !imagePath.isEmpty()) {
                     Glide.with(DeletedLogsActivity.this)
                             .load(new File(imagePath))

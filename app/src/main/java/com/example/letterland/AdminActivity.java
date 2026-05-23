@@ -18,7 +18,7 @@ public class AdminActivity extends AppCompatActivity {
     private long lastClickTime = 0;
     private AlertDialog pinDialog;
 
-    // FIX: Explicitly tracked class variable to prevent window leaked crashes during mutations
+    // FIX: mutations
     private AlertDialog wipePinDialog;
 
     @Override
@@ -169,7 +169,7 @@ public class AdminActivity extends AppCompatActivity {
     private void showConfirmWipeDialog() {
         View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_admin_pin, null);
 
-        // FIX: Assigned window reference directly to class field token to handle rotation destruction safely
+        // FIX: window safety
         wipePinDialog = new AlertDialog.Builder(this)
                 .setView(dialogView)
                 .create();

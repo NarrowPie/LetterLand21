@@ -50,7 +50,7 @@ public class QuizRecordAdapter extends RecyclerView.Adapter<QuizRecordAdapter.Vi
         SimpleDateFormat sdf = new SimpleDateFormat("MMM dd, yyyy - hh:mm a", Locale.getDefault());
         holder.tvTimestamp.setText(sdf.format(new Date(record.timestamp)));
 
-        // 🚀 THE FIX: Make the item clickable to view the past answers!
+        // THE FIX: Make the item clickable to view the past answers!
         holder.itemView.setOnClickListener(v -> {
             SoundManager.getInstance(v.getContext()).playClick();
             Intent intent = new Intent(v.getContext(), QuizResultActivity.class);

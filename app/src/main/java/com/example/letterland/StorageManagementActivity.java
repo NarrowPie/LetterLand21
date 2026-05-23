@@ -20,7 +20,7 @@ public class StorageManagementActivity extends AppCompatActivity {
 
     private long lastClickTime = 0;
 
-    // 🌟 AUTOMATIC CONVEYOR BELT PRUNING THRESHOLDS
+    //  AUTOMATIC CONVEYOR BELT PRUNING THRESHOLDS
     private static final int HISTORY_LOGS_LIMIT = 100;
     private static final int PLAYER_ACTIVITY_LIMIT = 200;
     private static final int DELETED_ITEMS_LIMIT = 50;
@@ -36,7 +36,7 @@ public class StorageManagementActivity extends AppCompatActivity {
 
         storageExecutor = Executors.newSingleThreadExecutor();
 
-        // 🌟 TRIGGER: Fire off the conveyor belt queries automatically on screen load
+        //  TRIGGER: Fire off the conveyor belt queries
         runAutomaticLogPruning();
 
         MaterialButton btnStorageBack = findViewById(R.id.btnStorageBack);
@@ -69,7 +69,7 @@ public class StorageManagementActivity extends AppCompatActivity {
         });
     }
 
-    // 🌟 BACKGROUND AUTOMATION WORKER
+    //  BACKGROUND AUTOMATION WORKER
     private void runAutomaticLogPruning() {
         storageExecutor.execute(() -> {
             try {

@@ -6,7 +6,7 @@ import androidx.room.Room;
 import androidx.room.RoomDatabase;
 import androidx.room.TypeConverters;
 
-// 🚀 Bumped to version 7 and added TypeConverters!
+// Bumped to version 7 and added TypeConverters!
 @Database(entities = {WordEntry.class, LogEntry.class, QuizRecord.class}, version = 7, exportSchema = false)
 @TypeConverters({Converters.class})
 public abstract class AppDatabase extends RoomDatabase {

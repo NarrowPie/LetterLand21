@@ -15,7 +15,7 @@ public class QuizRecord {
     public int totalItems;
     public long timestamp;
 
-    // 🚀 NEW: Now the database remembers the exact answers!
+    //  NEW: Now the database remembers the exact answers!
     public List<String> correctAnswers;
     public List<String> userAnswers;
 

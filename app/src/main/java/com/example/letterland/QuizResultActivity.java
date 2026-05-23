@@ -54,7 +54,7 @@ public class QuizResultActivity extends AppCompatActivity {
 
         if (correctAnswers == null || userAnswers == null) return;
 
-        // 🌟 STEP A FIX: Squeeze spaces out before calculating final result score display
+        //  STEP A FIX: Squeeze spaces out before calculating final result score display
         int score = 0;
         for (int i = 0; i < correctAnswers.size(); i++) {
             String cleanCorrect = correctAnswers.get(i).replace(" ", "").trim();
@@ -110,7 +110,7 @@ public class QuizResultActivity extends AppCompatActivity {
             holder.tvCorrectWord.setText(correctWord);
             holder.tvUserAnswer.setText(userWord);
 
-            // 🌟 STEP A FIX: Squeeze spaces out before tinting card backgrounds green/red
+            // STEP A FIX: Squeeze spaces out before tinting card backgrounds green/red
             String cleanCorrect = correctWord.replace(" ", "").trim();
             String cleanUser = userWord.replace(" ", "").trim();
 

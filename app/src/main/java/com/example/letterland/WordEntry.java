@@ -5,11 +5,11 @@ import androidx.room.Entity;
 import androidx.room.Ignore;
 import androidx.room.PrimaryKey;
 
-// 🚀 Removed the old primary keys constraint so words don't merge/overwrite!
+//  Removed the old primary keys constraint so words don't merge/overwrite!
 @Entity(tableName = "word_table")
 public class WordEntry {
 
-    // 🚀 NEW: Every single item gets its own unique ID now!
+    //  NEW: Every single item gets its own unique ID now!
     // This stops the database from confusing two items with the same name.
     @PrimaryKey(autoGenerate = true)
     public int id;
@@ -22,7 +22,7 @@ public class WordEntry {
 
     public String imagePath;
 
-    // 🚀 NEW: Tracks if the item is approved/starred for the Quiz!
+    //  NEW: Tracks if the item is approved/starred for the Quiz!
     public boolean isStarred = false;
 
     // This tracks if the checkbox is checked in the Admin panel!

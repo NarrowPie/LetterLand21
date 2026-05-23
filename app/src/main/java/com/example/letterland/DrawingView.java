@@ -266,8 +266,8 @@ public class DrawingView extends View {
         return true;
     }
 
-    // 🚀 FIXED OPTIMIZATION: Consolidated single worker redrawing template framework logic cleanly here
-    // 🚀 FIXED: Clears drawing lines without layering white paint over the text guide canvas
+    // OPTIMIZATION: Consolidated single worker
+    //  FIXED: Clears drawing lines without layering white paint over the text guide canvas
     public void setTracingWord(String word) {
         this.tracingWord = word;
 

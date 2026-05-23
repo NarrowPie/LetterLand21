@@ -24,7 +24,7 @@ public class AddObjectActivity extends AppCompatActivity {
     private ImageView ivSelectedImage;
     private Bitmap selectedBitmap = null;
 
-    // Handles Taking a Picture
+    // Picture handling
     private final ActivityResultLauncher<Void> takePictureLauncher = registerForActivityResult(
             new ActivityResultContracts.TakePicturePreview(),
             bitmap -> {
@@ -37,7 +37,7 @@ public class AddObjectActivity extends AppCompatActivity {
             }
     );
 
-    // Handles Picking from Gallery
+    // HGallery bbb
     private final ActivityResultLauncher<String> pickImageLauncher = registerForActivityResult(
             new ActivityResultContracts.GetContent(),
             uri -> {
@@ -62,13 +62,13 @@ public class AddObjectActivity extends AppCompatActivity {
         etNewWord = findViewById(R.id.etNewWord);
         ivSelectedImage = findViewById(R.id.ivSelectedImage);
 
-        // 🌟 FIX: Limits the physical keyboard input text space length strictly to 13 characters max
+        // FIX: 13 characters
         etNewWord.setFilters(new InputFilter[]{new InputFilter.LengthFilter(13)});
 
         MaterialButton btnCamera = findViewById(R.id.btnCamera);
         MaterialButton btnGallery = findViewById(R.id.btnGallery);
         MaterialButton btnSave = findViewById(R.id.btnSaveObject);
-        // Fixed: Bind directly using the true ID from your activity_add_object.xml file
+        // fix***
         MaterialButton btnBack = findViewById(R.id.btnAddObjectBack);
 
         if (btnBack != null) {
@@ -100,7 +100,7 @@ public class AddObjectActivity extends AppCompatActivity {
         });
     }
 
-    // Safely scale down images AND fix black background issues
+    // fixing black background bug
     private Bitmap getResizedAndFixedBitmap(Bitmap image, int maxSize) {
         int width = image.getWidth();
         int height = image.getHeight();
@@ -138,10 +138,10 @@ public class AddObjectActivity extends AppCompatActivity {
             return;
         }
 
-        // Fetch the profile value safely
+        // Fetch the profile value
         String activePlayer = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "").trim();
 
-        // Enforce profile assignment safety check before creating worker loops
+        // enforcing
         if (activePlayer.isEmpty()) {
             Toast.makeText(this, "No active profile! Please select a player profile on the main menu first.", Toast.LENGTH_LONG).show();
             return;
@@ -151,7 +151,7 @@ public class AddObjectActivity extends AppCompatActivity {
         final String finalizedWord = word;
 
         new Thread(() -> {
-            // Verifies if the word already exists under the active child's profile list
+            // Verified
             WordEntry existingWord = AppDatabase.getInstance(this).wordDao().findWordForProfile(finalizedWord, player);
             if (existingWord != null) {
                 runOnUiThread(() -> Toast.makeText(this, "This word already exists in the Almanac!", Toast.LENGTH_SHORT).show());
@@ -168,12 +168,12 @@ public class AddObjectActivity extends AppCompatActivity {
                 // Save directly under the validated player name
                 WordEntry newEntry = new WordEntry(finalizedWord, player, file.getAbsolutePath());
 
-                // Set to true so admin additions appear inside Quiz Mode automatically!
+                // Set to true so admin additions appear inside Quiz Mode automatically
                 newEntry.isStarred = true;
 
                 AppDatabase.getInstance(this).wordDao().insert(newEntry);
 
-                // Explicitly tracks the admin panel addition inside your custom application audit logger rows
+                // tracks logging row
                 try {
                     String logDetails = finalizedWord + "|" + file.getAbsolutePath() + "|" + player;
                     AppDatabase.getInstance(this).logDao().insertLog(new LogEntry("ADMIN ADDED WORD", logDetails, System.currentTimeMillis()));
