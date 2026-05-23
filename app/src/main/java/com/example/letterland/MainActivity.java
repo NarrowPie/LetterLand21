@@ -282,11 +282,13 @@ public class MainActivity extends AppCompatActivity {
 
             // FIX: Room initialization optimized via getApplicationContext() points to prevent leaking dead environments
             databaseExecutor.execute(() -> {
-                java.util.List<?> profileWords = AppDatabase.getInstance(this.getApplicationContext()).wordDao().getAllWordsForProfile(threadSafePlayerProfile);
+                java.util.List<?> profileWords = AppDatabase.getInstance(this.getApplicationContext()).wordDao().getStarredWordsForProfile(threadSafePlayerProfile);
                 int wordCount = (profileWords != null) ? profileWords.size() : 0;
 
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) return;
+
+                    // CHANGE > 9 TO >= 10 FOR ABSOLUTE CLARITY
                     if (wordCount >= 10) {
                         btnQuiz.setEnabled(true);
                         btnQuiz.setBackgroundTintList(ColorStateList.valueOf(ContextCompat.getColor(this, R.color.quiz_unlocked_purple)));
