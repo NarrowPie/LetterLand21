@@ -193,9 +193,13 @@ public class ProfilesActivity extends AppCompatActivity {
                     }
 
                     new Thread(() -> {
-                        AppDatabase.getInstance(this).wordDao().updateProfileName(oldProfileName, newName);
-                        AppDatabase.getInstance(this).quizRecordDao().updateProfileName(oldProfileName, newName);
-                        AppDatabase.getInstance(this).logDao().updateProfileNameInDeletedLogs(oldProfileName, newName);
+                        // 🌟 FIX: Pass newName first to match the updated DAO left-to-right mapping
+                        AppDatabase.getInstance(this).wordDao().updateProfileName(newName, oldProfileName);
+
+                        // ⚠️ CRITICAL NOTE: Check your QuizRecordDao and LogDao files!
+                        // If their SQL queries also have `:newName` before `:oldName`, swap their method parameters to match this order too:
+                        AppDatabase.getInstance(this).quizRecordDao().updateProfileName(newName, oldProfileName);
+                        AppDatabase.getInstance(this).logDao().updateProfileNameInDeletedLogs(newName, oldProfileName);
 
                         recordPlayerLog(newName, "RENAMED_FROM|" + oldProfileName);
 

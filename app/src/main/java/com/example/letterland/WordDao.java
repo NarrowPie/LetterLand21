@@ -29,9 +29,10 @@ public interface WordDao {
     @Query("SELECT * FROM word_table ORDER BY rowid DESC")
     List<WordEntry> getAllWords();
 
+
     // Transfer ownership of all pictures to the new name!
     @Query("UPDATE word_table SET profileName = :newName WHERE profileName = :oldName")
-    void updateProfileName(String oldName, String newName);
+    void updateProfileName(String newName, String oldName); // 🌟 FIX: swapped parameter positions to match query left-to-right order
 
     @Update
     void update(WordEntry word);

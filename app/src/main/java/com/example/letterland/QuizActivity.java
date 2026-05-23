@@ -158,9 +158,10 @@ public class QuizActivity extends AppCompatActivity {
                 return;
             }
 
-            String speechPayload = currentlyDetectedWord;
+            // Swapped safely here to target word payload
+            String speechPayload = targetSolutionWord;
 
-            if (speechPayload != null && !speechPayload.isEmpty() && !speechPayload.equals("...")) {
+            if (speechPayload != null && !speechPayload.isEmpty()) {
                 String optimizedPayload = speechPayload.trim().toLowerCase(Locale.US);
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -176,7 +177,7 @@ public class QuizActivity extends AppCompatActivity {
                     textToSpeech.speak(optimizedPayload, TextToSpeech.QUEUE_FLUSH, null, "QUIZ_TTS_ID");
                 }
             } else {
-                Toast.makeText(this, "Write an answer first!", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Preparing question...", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -392,7 +393,6 @@ public class QuizActivity extends AppCompatActivity {
             }
         }
 
-        // 🌟 STEP B FIX: Keep the layouts separated for phrase hints
         for (int i = 0; i < len; i++) {
             if (word.charAt(i) == ' ') {
                 currentMaskedDisplayArray[i] = ' ';
@@ -444,7 +444,6 @@ public class QuizActivity extends AppCompatActivity {
                     .into(ivZoomed);
         }
 
-        // 🌟 FIXED ID COMPILATION ERROR HERE
         zoomDialog.findViewById(R.id.rootZoomLayout).setOnClickListener(v1 -> {
             SoundManager.getInstance(this).playClick();
             zoomDialog.dismiss();
@@ -491,7 +490,6 @@ public class QuizActivity extends AppCompatActivity {
         if (scanRunnable != null) scanHandler.removeCallbacks(scanRunnable);
         int finalScore = 0;
 
-        // 🌟 STEP A FIX: Squeeze formatting gaps out before scoring matches
         for (int i = 0; i < correctAnswers.size(); i++) {
             String cleanCorrect = correctAnswers.get(i).replace(" ", "").trim();
             String cleanUser = userAnswers.get(i).replace(" ", "").trim();
@@ -523,7 +521,7 @@ public class QuizActivity extends AppCompatActivity {
     private void resetCanvasAndText() {
         drawingView.clearCanvas();
         if (recognizer == null) {
-            tvLiveText.setText("Loading AI...");
+            tvLiveText.setText("Loading...");
         } else {
             tvLiveText.setText("...");
         }
@@ -547,7 +545,6 @@ public class QuizActivity extends AppCompatActivity {
                     if (!result.getCandidates().isEmpty()) {
                         String cleanWord = result.getCandidates().get(0).getText().toUpperCase().trim();
 
-                        // 🌟 FIX: Extended cap bounds from 10 to 24 to handle long multi-word targets safely
                         if (cleanWord.length() > 24) {
                             cleanWord = cleanWord.substring(0, 24);
                         }
