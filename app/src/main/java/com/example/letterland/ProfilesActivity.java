@@ -2,8 +2,9 @@ package com.example.letterland;
 
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
+import android.graphics.ImageDecoder;
+import android.net.Uri;
 import android.os.Bundle;
-import android.provider.MediaStore;
 import android.text.InputFilter;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -20,11 +21,15 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import com.bumptech.glide.Glide;
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class ProfilesActivity extends AppCompatActivity {
 
@@ -33,12 +38,17 @@ public class ProfilesActivity extends AppCompatActivity {
     private SharedPreferences prefs;
     private String profileAwaitingImage = "";
 
+    // FIX: Replaced raw thread models with a managed background task executor service
+    private ExecutorService profileExecutor;
+
+    // FIX: Scoped Storage optimized avatar processing using non-deprecated ImageDecoder API
     private final ActivityResultLauncher<String> pickAvatarLauncher = registerForActivityResult(
             new ActivityResultContracts.GetContent(),
             uri -> {
                 if (uri != null && !profileAwaitingImage.isEmpty()) {
                     try {
-                        Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), uri);
+                        ImageDecoder.Source source = ImageDecoder.createSource(this.getContentResolver(), uri);
+                        Bitmap bitmap = ImageDecoder.decodeBitmap(source);
                         saveAvatarToStorage(profileAwaitingImage, bitmap);
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -53,6 +63,7 @@ public class ProfilesActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_profiles);
 
+        profileExecutor = Executors.newSingleThreadExecutor();
         prefs = getSharedPreferences("LetterLandMemory", MODE_PRIVATE);
         rvProfiles = findViewById(R.id.rvProfiles);
         rvProfiles.setLayoutManager(new LinearLayoutManager(this));
@@ -119,8 +130,6 @@ public class ProfilesActivity extends AppCompatActivity {
     private void showAddProfileDialog() {
         EditText input = new EditText(this);
         input.setHint("Enter your Name");
-
-        // 🌟 LIMIT: Stops typing after exactly 12 characters
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(12)});
 
         new AlertDialog.Builder(this)
@@ -132,7 +141,6 @@ public class ProfilesActivity extends AppCompatActivity {
                     if (!newName.isEmpty()) {
                         Set<String> oldProfiles = prefs.getStringSet("ALL_PROFILES", new HashSet<>());
 
-                        // 🌟 CHECK: Prevent adding a name that already exists
                         if (oldProfiles.contains(newName)) {
                             Toast.makeText(this, "A player with this name already exists!", Toast.LENGTH_SHORT).show();
                             return;
@@ -142,9 +150,7 @@ public class ProfilesActivity extends AppCompatActivity {
                         newProfiles.add(newName);
 
                         prefs.edit().putStringSet("ALL_PROFILES", newProfiles).apply();
-
                         recordPlayerLog(newName, "ADDED");
-
                         loadProfiles();
                     } else {
                         Toast.makeText(this, "Name cannot be empty!", Toast.LENGTH_SHORT).show();
@@ -157,8 +163,6 @@ public class ProfilesActivity extends AppCompatActivity {
     private void showRenameProfileDialog(String oldProfileName) {
         EditText input = new EditText(this);
         input.setText(oldProfileName);
-
-        // 🌟 LIMIT: Stops typing after exactly 12 characters during a rename operation
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(12)});
         input.setSelection(input.getText().length());
 
@@ -192,13 +196,12 @@ public class ProfilesActivity extends AppCompatActivity {
                         prefs.edit().remove("AVATAR_" + oldProfileName).apply();
                     }
 
-                    new Thread(() -> {
-                        // 🌟 WordDao Fix (from previous turn): newName is 1st, oldProfileName is 2nd
-                        AppDatabase.getInstance(this).wordDao().updateProfileName(newName, oldProfileName);
-                        AppDatabase.getInstance(this).quizRecordDao().updateProfileName(newName, oldProfileName);
-
-                        // 🌟 LogDao Fix: oldProfileName is 1st, newName is 2nd (to match left-to-right order of placeholders)
-                        AppDatabase.getInstance(this).logDao().updateProfileNameInLogs(oldProfileName, newName);
+                    // FIX: Replaced raw thread structures with executor bindings linked to Application Context references
+                    profileExecutor.execute(() -> {
+                        AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
+                        db.wordDao().updateProfileName(newName, oldProfileName);
+                        db.quizRecordDao().updateProfileName(newName, oldProfileName);
+                        db.logDao().updateProfileNameInLogs(oldProfileName, newName);
 
                         recordPlayerLog(newName, "RENAMED_FROM|" + oldProfileName);
 
@@ -206,18 +209,26 @@ public class ProfilesActivity extends AppCompatActivity {
                             Toast.makeText(this, oldProfileName + " renamed to " + newName, Toast.LENGTH_SHORT).show();
                             loadProfiles();
                         });
-                    }).start();
+                    });
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
     }
 
     private void recordPlayerLog(String playerName, String logType) {
-        new Thread(() -> {
+        profileExecutor.execute(() -> {
             long timestamp = System.currentTimeMillis();
             LogEntry log = new LogEntry("PLAYER_LOG", logType + "|" + playerName, timestamp);
-            AppDatabase.getInstance(this).logDao().insertLog(log);
-        }).start();
+            AppDatabase.getInstance(this.getApplicationContext()).logDao().insertLog(log);
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (profileExecutor != null) {
+            profileExecutor.shutdown();
+        }
+        super.onDestroy();
     }
 
     private class ProfileAdapter extends RecyclerView.Adapter<ProfileAdapter.ProfileViewHolder> {
@@ -240,8 +251,14 @@ public class ProfilesActivity extends AppCompatActivity {
             holder.tvProfileName.setText(profileName);
 
             String avatarPath = prefs.getString("AVATAR_" + profileName, null);
-            if (avatarPath != null) {
-                holder.ivAvatar.setImageURI(android.net.Uri.parse(avatarPath));
+
+            // FIX: Implemented Glide to parse absolute sandboxed file directory path values seamlessly
+            if (avatarPath != null && !avatarPath.isEmpty()) {
+                Glide.with(holder.ivAvatar.getContext())
+                        .load(new File(avatarPath))
+                        .placeholder(R.drawable.admin_pic)
+                        .error(R.drawable.admin_pic)
+                        .into(holder.ivAvatar);
             } else {
                 holder.ivAvatar.setImageResource(R.drawable.admin_pic);
             }

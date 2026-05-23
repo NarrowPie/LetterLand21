@@ -4,6 +4,8 @@ import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.media.SoundPool;
+import android.os.Handler;
+import android.os.Looper;
 
 public class SoundManager {
     private static SoundManager instance;
@@ -12,16 +14,17 @@ public class SoundManager {
     private int clickSoundId;
     private int shutterSoundId;
 
-    // ✏️ Pencil scratch variables
     private int scratchSoundId;
     private int scratchStreamId = 0;
 
     private MediaPlayer backgroundMusicPlayer;
     private boolean isSoundOn = true;
 
-    // 🎵 Volume Constants
     private final float NORMAL_MUSIC_VOLUME = 0.2f;
     private final float DUCKED_MUSIC_VOLUME = 0.05f;
+
+    // FIX: Single persistent UI main thread handler reference to prevent memory collection leaks
+    private final Handler audioCleanupHandler = new Handler(Looper.getMainLooper());
 
     private SoundManager(Context context) {
         AudioAttributes audioAttributes = new AudioAttributes.Builder()
@@ -37,14 +40,12 @@ public class SoundManager {
         clickSoundId = soundPool.load(context, R.raw.button_pop, 1);
         shutterSoundId = soundPool.load(context, R.raw.shutter, 1);
 
-        // ✏️ Load the scratch sound
         try {
             scratchSoundId = soundPool.load(context, R.raw.scratch, 1);
         } catch (Exception e) {
             e.printStackTrace();
         }
 
-        // 🎵 Initialize background music
         try {
             backgroundMusicPlayer = MediaPlayer.create(context.getApplicationContext(), R.raw.game_music);
             if (backgroundMusicPlayer != null) {
@@ -74,24 +75,22 @@ public class SoundManager {
         }
     }
 
-    // 🚀 NEW: Dynamic Phonics Playback Channel
-    // Automatically drops background music volume, triggers the child's local custom letter .mp3 asset,
-    // and schedules the ambient theme track to recover its depth immediately after the sound bite concludes!
+    // FIX: Patched native OpenSL ES asset cache buildup leak via explicit post-playback sample unloads
     public void playPhonicAsset(Context context, int resId) {
         if (!isSoundOn || resId == 0) return;
 
         duckBackgroundMusic();
 
-        // Load and sound immediate play-through markers securely
         int loadedSoundId = soundPool.load(context, resId, 1);
-        soundPool.setOnLoadCompleteListener((soundPool, sampleId, status) -> {
-            if (status == 0) { // 0 = Success
-                soundPool.play(sampleId, 1.0f, 1.0f, 2, 0, 1.0f);
+        soundPool.setOnLoadCompleteListener((pool, sampleId, status) -> {
+            if (status == 0) {
+                pool.play(sampleId, 1.0f, 1.0f, 2, 0, 1.0f);
 
-                // Track decay safely and schedule music restoration channel
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                audioCleanupHandler.postDelayed(() -> {
                     restoreBackgroundMusic();
-                }, 1200); // 1.2 second grace period matches average custom phoneme clip lengths
+                    // CRITICAL FIX: Drops sound asset mapping indexes out of the hardware pool to stop audio muting crashes
+                    soundPool.unload(sampleId);
+                }, 1200);
             } else {
                 restoreBackgroundMusic();
             }
@@ -124,17 +123,23 @@ public class SoundManager {
         }
     }
 
-    // 🌟 Temporarily lower the music volume so the letter sounds can be heard
     public void duckBackgroundMusic() {
-        if (isSoundOn && backgroundMusicPlayer != null && backgroundMusicPlayer.isPlaying()) {
+        if (isSoundOn && backgroundMusicPlayer != null && !isFinishingMusicPlayer()) {
             backgroundMusicPlayer.setVolume(DUCKED_MUSIC_VOLUME, DUCKED_MUSIC_VOLUME);
         }
     }
 
-    // 🌟 Restore the music volume after the asset finishes speaking
     public void restoreBackgroundMusic() {
-        if (isSoundOn && backgroundMusicPlayer != null && backgroundMusicPlayer.isPlaying()) {
+        if (isSoundOn && backgroundMusicPlayer != null && !isFinishingMusicPlayer()) {
             backgroundMusicPlayer.setVolume(NORMAL_MUSIC_VOLUME, NORMAL_MUSIC_VOLUME);
+        }
+    }
+
+    private boolean isFinishingMusicPlayer() {
+        try {
+            return !backgroundMusicPlayer.isPlaying() && backgroundMusicPlayer.getCurrentPosition() == 0;
+        } catch (Exception e) {
+            return true;
         }
     }
 

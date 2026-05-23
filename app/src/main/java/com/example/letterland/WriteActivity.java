@@ -44,6 +44,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class WriteActivity extends AppCompatActivity {
 
@@ -60,7 +62,6 @@ public class WriteActivity extends AppCompatActivity {
     private String lastSpokenLetter = "";
     private int lastSpokenWordLength = 0;
 
-    // 🎙️ Speech Recognizer Fields
     private SpeechRecognizer speechRecognizer;
     private Intent speechIntent;
     private AlertDialog voiceDialog;
@@ -68,14 +69,15 @@ public class WriteActivity extends AppCompatActivity {
     private boolean isVoiceInputActive = false;
     private String rawVoiceOutputBuffer = "";
 
-    // 🗣️ TextToSpeech Fields
     private TextToSpeech textToSpeech;
     private boolean isTtsReady = false;
 
-    // ⏳ Tracking fields to safely handle button spam clicks exclusively
     private boolean isButtonSpamLocked = false;
-    private boolean isProceedingLocked = false; // 🌟 SPAM GUARD FIXED: Prevents double thread loops
+    private boolean isProceedingLocked = false;
     private final Handler spamHandler = new Handler(Looper.getMainLooper());
+
+    // FIX: Managed thread model prevents leak profiles during component mutations
+    private ExecutorService databaseExecutor;
 
     private final ActivityResultLauncher<String> requestPermissionLauncher = registerForActivityResult(
             new ActivityResultContracts.RequestPermission(),
@@ -121,6 +123,8 @@ public class WriteActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_write);
 
+        databaseExecutor = Executors.newSingleThreadExecutor();
+
         drawingView = findViewById(R.id.drawingView);
         tvLiveText = findViewById(R.id.tvLiveText);
         MaterialButton btnClear = findViewById(R.id.btnClear);
@@ -131,7 +135,6 @@ public class WriteActivity extends AppCompatActivity {
 
         btnBack.setOnClickListener(v -> finish());
 
-        // Initialize TextToSpeech Engine
         textToSpeech = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS) {
                 int result = textToSpeech.setLanguage(Locale.US);
@@ -143,7 +146,6 @@ public class WriteActivity extends AppCompatActivity {
             }
         });
 
-        // Configure Audio Focus Ducking Listeners for TTS
         textToSpeech.setOnUtteranceProgressListener(new UtteranceProgressListener() {
             @Override
             public void onStart(String utteranceId) {
@@ -161,7 +163,6 @@ public class WriteActivity extends AppCompatActivity {
             }
         });
 
-        // Click Listener to speak currently detected live text strings with Isolated Spam Guard
         if (btnSpeakLiveText != null) {
             btnSpeakLiveText.setOnClickListener(v -> {
                 if (!isTtsReady) {
@@ -169,18 +170,13 @@ public class WriteActivity extends AppCompatActivity {
                     return;
                 }
 
-                // 🛑 BUTTON SPAM GUARD: Block click execution instantly if locked
                 if (isButtonSpamLocked) {
                     return;
                 }
 
                 if (currentlyDetectedWord != null && !currentlyDetectedWord.isEmpty() && !currentlyDetectedWord.equals("...")) {
-                    // Activate button lock threshold
                     isButtonSpamLocked = true;
-
                     speakTextDirectly(currentlyDetectedWord);
-
-                    // Enforce a strict 1-second delay after trigger before unlocking the button interaction again
                     spamHandler.postDelayed(() -> isButtonSpamLocked = false, 1000);
                 } else {
                     Toast.makeText(this, "Write something first!", Toast.LENGTH_SHORT).show();
@@ -188,15 +184,14 @@ public class WriteActivity extends AppCompatActivity {
             });
         }
 
-        // Initialize Lifecycle-Bound Single Instance Engine
         if (SpeechRecognizer.isRecognitionAvailable(this)) {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
             initializeSpeechIntent();
             setupSpeechListener();
         }
 
-        // Asynchronously populate dictionary indices
-        new Thread(this::loadDictionaryData).start();
+        // FIX: Shifted background setup onto the managed execution thread
+        databaseExecutor.execute(this::loadDictionaryData);
         tvLiveText.setText("Loading Model...");
 
         try {
@@ -244,14 +239,14 @@ public class WriteActivity extends AppCompatActivity {
 
         btnProceed.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
-            if (isProceedingLocked) { // 🌟 BLOCK ACTION IF THREAD RUNNING
+            if (isProceedingLocked) {
                 return;
             }
 
             if (currentlyDetectedWord.isEmpty() || currentlyDetectedWord.equals("...")) {
                 Toast.makeText(this, "Write clearly first!", Toast.LENGTH_SHORT).show();
             } else {
-                isProceedingLocked = true; // Lock immediately to protect thread safety
+                isProceedingLocked = true;
                 checkWordDatabase(currentlyDetectedWord);
             }
         });
@@ -280,7 +275,8 @@ public class WriteActivity extends AppCompatActivity {
 
         try {
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-            List<WordEntry> savedWords = AppDatabase.getInstance(this).wordDao().getAllWordsForProfile(player);
+            // FIX: Applied application contexts to protect configuration cycles
+            List<WordEntry> savedWords = AppDatabase.getInstance(this.getApplicationContext()).wordDao().getAllWordsForProfile(player);
             for (WordEntry entry : savedWords) {
                 DICTIONARY.add(entry.word.toUpperCase().trim());
             }
@@ -382,8 +378,6 @@ public class WriteActivity extends AppCompatActivity {
                     if (isFinishing() || isDestroyed() || result.getCandidates().isEmpty()) return;
 
                     String rawText = result.getCandidates().get(0).getText().toUpperCase().trim();
-
-                    // 🌟 HARD PROTECTION CHECK: Strip out numbers, symbols, spaces cleanly
                     String cleanWord = rawText.replaceAll("[^A-Z]", "");
 
                     if (cleanWord.isEmpty()) {
@@ -392,7 +386,6 @@ public class WriteActivity extends AppCompatActivity {
                         return;
                     }
 
-                    // 🌟 PROTECTIVE CAP ENFORCED: Strict 12-letter limit bounds applied seamlessly
                     if (cleanWord.length() > 13) {
                         cleanWord = cleanWord.substring(0, 12);
                     }
@@ -422,12 +415,6 @@ public class WriteActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * 🌟 NEW: Normalizes speech target payload strings dynamically.
-     * Keeps single isolated characters explicitly mapped to their phonic text mappings,
-     * while transforming longer uppercase dictionary words into lowercase formatting
-     * to eliminate letter-by-letter abbreviation spellings by the engine.
-     */
     private String getNormalizedTtsText(String text) {
         if (text == null || text.trim().isEmpty()) {
             return "";
@@ -506,7 +493,6 @@ public class WriteActivity extends AppCompatActivity {
             String verifiedWord = rawVoiceOutputBuffer.isEmpty() ? "MIC" : rawVoiceOutputBuffer;
             voiceDialog.dismiss();
 
-            // Strip numeric symbols from incoming voice assist fallback text configurations too
             verifiedWord = verifiedWord.replaceAll("[^A-Z]", "");
             if(verifiedWord.isEmpty()) verifiedWord = "MIC";
 
@@ -530,7 +516,6 @@ public class WriteActivity extends AppCompatActivity {
         voiceDialog.show();
         tvVoiceStatus.setText("Listening...");
 
-        // ⚡ OPTIMIZED: Launches speech recording loop instantly without artificial thread blocks
         speechRecognizer.startListening(speechIntent);
     }
 
@@ -545,7 +530,6 @@ public class WriteActivity extends AppCompatActivity {
             Bundle params = new Bundle();
             params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
 
-            // Using QUEUE_FLUSH interrupts any ongoing direct speaks instantly
             textToSpeech.speak(optimizedString, TextToSpeech.QUEUE_FLUSH, params, "TTS_DIRECT_ID");
         } else {
             textToSpeech.speak(optimizedString, TextToSpeech.QUEUE_FLUSH, null, "TTS_DIRECT_ID");
@@ -553,7 +537,8 @@ public class WriteActivity extends AppCompatActivity {
     }
 
     private void checkWordDatabase(String word) {
-        new Thread(() -> {
+        // FIX: Replaced explicit Thread calls with an optimized SingleThread executor
+        databaseExecutor.execute(() -> {
             String targetWord = word.toUpperCase().trim();
 
             if (isVoiceInputActive && !DICTIONARY.contains(targetWord)) {
@@ -562,10 +547,10 @@ public class WriteActivity extends AppCompatActivity {
 
             final String processedWord = targetWord;
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-            WordEntry savedWord = AppDatabase.getInstance(this).wordDao().findWordForProfile(processedWord, player);
+            WordEntry savedWord = AppDatabase.getInstance(this.getApplicationContext()).wordDao().findWordForProfile(processedWord, player);
 
             runOnUiThread(() -> {
-                isProceedingLocked = false; // 🌟 UNLOCK ONCE THREAD FINISHES ON UI
+                isProceedingLocked = false;
                 if (isFinishing() || isDestroyed()) return;
                 if (savedWord != null) {
                     Intent intent = new Intent(WriteActivity.this, WordDetailActivity.class);
@@ -579,7 +564,7 @@ public class WriteActivity extends AppCompatActivity {
                     showNewWordDialog(processedWord);
                 }
             });
-        }).start();
+        });
     }
 
     private String findPhoneticMatch(String scannedWord) {
@@ -652,14 +637,14 @@ public class WriteActivity extends AppCompatActivity {
         lastSpokenLetter = "";
         lastSpokenWordLength = 0;
         isVoiceInputActive = false;
-        isProceedingLocked = false; // 🌟 Reset guard lock state
+        isProceedingLocked = false;
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         SoundManager.getInstance(this).startBackgroundMusic();
-        isProceedingLocked = false; // 🌟 Reset block on screen return
+        isProceedingLocked = false;
     }
 
     @Override
@@ -668,7 +653,6 @@ public class WriteActivity extends AppCompatActivity {
         SoundManager.getInstance(this).pauseBackgroundMusic();
         SoundManager.getInstance(this).stopScratchSound();
 
-        // Remove any active delay triggers to safeguard resource leaks
         spamHandler.removeCallbacksAndMessages(null);
         if (speechRecognizer != null) {
             speechRecognizer.cancel();
@@ -682,6 +666,14 @@ public class WriteActivity extends AppCompatActivity {
         }
         if (speechRecognizer != null) {
             speechRecognizer.destroy();
+        }
+
+        // FIX: Added model disposal pipelines to destroy native layout engines properly
+        if (recognizer != null) {
+            recognizer.close();
+        }
+        if (databaseExecutor != null) {
+            databaseExecutor.shutdown();
         }
         super.onDestroy();
     }

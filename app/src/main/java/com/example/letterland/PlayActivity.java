@@ -63,21 +63,17 @@ public class PlayActivity extends AppCompatActivity {
 
     private String pendingWord = "";
     private String currentlyHighlightedWord = "";
-    private Handler realTimeHandler = new Handler(Looper.getMainLooper());
+    private final Handler realTimeHandler = new Handler(Looper.getMainLooper());
     private boolean isScanningPaused = false;
 
-    // HashSet for instant O(1) lookups instead of slow O(N) linear scans
     private final Set<String> DICTIONARY = new HashSet<>();
-
     private ExecutorService cameraExecutor;
-
     private AlertDialog newWordDialog;
 
     private final ActivityResultLauncher<Void> takePictureLauncher = registerForActivityResult(
             new ActivityResultContracts.TakePicturePreview(),
             bitmap -> {
                 if (bitmap != null && !pendingWord.isEmpty()) {
-                    // Used existing executor instead of spawning rogue threads
                     cameraExecutor.execute(() -> saveToAlmanac(pendingWord, bitmap));
                 } else {
                     Toast.makeText(this, "No picture taken", Toast.LENGTH_SHORT).show();
@@ -109,11 +105,12 @@ public class PlayActivity extends AppCompatActivity {
 
             try {
                 String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-                List<WordEntry> savedWords = AppDatabase.getInstance(PlayActivity.this).wordDao().getAllWordsForProfile(player);
+                // FIX: Guard with application context to shield from configuration crashes
+                List<WordEntry> savedWords = AppDatabase.getInstance(this.getApplicationContext()).wordDao().getAllWordsForProfile(player);
 
                 for (WordEntry entry : savedWords) {
                     String dbWord = entry.word.toUpperCase().trim();
-                    DICTIONARY.add(dbWord); // HashSet naturally handles duplicates
+                    DICTIONARY.add(dbWord);
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -177,7 +174,8 @@ public class PlayActivity extends AppCompatActivity {
 
             cameraExecutor.execute(() -> {
                 String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-                WordEntry savedWord = AppDatabase.getInstance(this).wordDao().findWordForProfile(wordToSearch, player);
+                // FIX: Bound layout query pipeline to the global Application Context
+                WordEntry savedWord = AppDatabase.getInstance(this.getApplicationContext()).wordDao().findWordForProfile(wordToSearch, player);
 
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) return;
@@ -188,7 +186,7 @@ public class PlayActivity extends AppCompatActivity {
                         intent.putExtra("WORD_TEXT", savedWord.word);
                         intent.putExtra("IMAGE_PATH", savedWord.imagePath);
                         intent.putExtra("SOURCE_PAGE", "SCANNER");
-                        intent.putExtra("IS_NEW_WORD", false); // PREVENTS DELETION EXPLOIT
+                        intent.putExtra("IS_NEW_WORD", false);
                         startActivity(intent);
                     } else {
                         View dialogView = LayoutInflater.from(PlayActivity.this).inflate(R.layout.dialog_new_word, null);
@@ -286,25 +284,26 @@ public class PlayActivity extends AppCompatActivity {
 
             int[] boxLoc = new int[2]; scanContainer.getLocationOnScreen(boxLoc);
             int[] findLoc = new int[2]; viewFinder.getLocationOnScreen(findLoc);
-            int startX = Math.max(0, boxLoc[0] - findLoc[0]);
-            int startY = Math.max(0, boxLoc[1] - findLoc[1]);
-            int width = Math.min(scanContainer.getWidth(), fullBitmap.getWidth() - startX);
-            int height = Math.min(scanContainer.getHeight(), fullBitmap.getHeight() - startY);
+            final int startX = Math.max(0, boxLoc[0] - findLoc[0]);
+            final int startY = Math.max(0, boxLoc[1] - findLoc[1]);
+            final int width = Math.min(scanContainer.getWidth(), fullBitmap.getWidth() - startX);
+            final int height = Math.min(scanContainer.getHeight(), fullBitmap.getHeight() - startY);
 
-            if(width <= 0 || height <= 0 || startX < 0 || startY < 0) {
+            if (width <= 0 || height <= 0 || startX < 0 || startY < 0) {
                 fullBitmap.recycle();
                 realTimeHandler.postDelayed(this, 300);
                 return;
             }
 
-            Bitmap croppedBitmap = Bitmap.createBitmap(fullBitmap, startX, startY, width, height);
-
-            if (fullBitmap != croppedBitmap) {
-                fullBitmap.recycle();
-            }
-
+            // FIX: Pushed Bitmap cropping entirely into the executor thread pool to unlock UI fluid response loops
             cameraExecutor.execute(() -> {
-                if (isFinishing() || isDestroyed()) return;
+                if (isFinishing() || isDestroyed()) {
+                    fullBitmap.recycle();
+                    return;
+                }
+
+                Bitmap croppedBitmap = Bitmap.createBitmap(fullBitmap, startX, startY, width, height);
+                fullBitmap.recycle(); // Safe memory cleaning layout execution
 
                 Bitmap cleanedBitmap = enhanceImageForOCR(croppedBitmap);
                 InputImage image = InputImage.fromBitmap(cleanedBitmap, 0);
@@ -413,12 +412,14 @@ public class PlayActivity extends AppCompatActivity {
 
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
             WordEntry newEntry = new WordEntry(word, player, file.getAbsolutePath());
-            AppDatabase.getInstance(this).wordDao().insert(newEntry);
 
-            // --- 🌟 ADDED USER HISTORY LOG FOR DISCOVERY TRACKING ---
+            // FIX: Bound saving routines to clean AppContext
+            AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
+            db.wordDao().insert(newEntry);
+
             try {
                 String logDetails = word + "|" + file.getAbsolutePath() + "|" + player;
-                AppDatabase.getInstance(this).logDao().insertLog(new LogEntry("ADDED WORD", logDetails, System.currentTimeMillis()));
+                db.logDao().insertLog(new LogEntry("ADDED WORD", logDetails, System.currentTimeMillis()));
             } catch (Exception logEx) {
                 logEx.printStackTrace();
             }
@@ -435,7 +436,7 @@ public class PlayActivity extends AppCompatActivity {
                 intent.putExtra("WORD_TEXT", word);
                 intent.putExtra("IMAGE_PATH", file.getAbsolutePath());
                 intent.putExtra("SOURCE_PAGE", "SCANNER");
-                intent.putExtra("IS_NEW_WORD", true); // ALLOWS DELETING JUST THIS ONCE
+                intent.putExtra("IS_NEW_WORD", true);
                 startActivity(intent);
             });
         } catch (java.io.IOException e) {
@@ -446,10 +447,9 @@ public class PlayActivity extends AppCompatActivity {
         }
     }
 
-    // OPTIMIZED FUZZY WORD LANE WITH TIGHT CHARACTER LENGTH FILTER
     private String findClosestWord(String scannedWord) {
         if (scannedWord == null || scannedWord.isEmpty()) return "";
-        if (DICTIONARY.contains(scannedWord)) return scannedWord; // Instant O(1) matching gate
+        if (DICTIONARY.contains(scannedWord)) return scannedWord;
 
         String bestMatch = scannedWord;
         int lowestDistance = 999;
@@ -457,8 +457,6 @@ public class PlayActivity extends AppCompatActivity {
         int scannedLength = scannedWord.length();
 
         for (String dictionaryWord : DICTIONARY) {
-            // OPTIMIZATION GATING: If length variance exceeds allowable edit differences,
-            // a match is structurally impossible. Bypasses calculations instantly.
             if (Math.abs(scannedLength - dictionaryWord.length()) > maxAllowedDifferences) {
                 continue;
             }
@@ -472,7 +470,6 @@ public class PlayActivity extends AppCompatActivity {
         return bestMatch;
     }
 
-    // Replaced heavy memory-hogging 2D array allocations with space-optimized 1D structures
     private int calculateEditDistance(String a, String b) {
         int[] costs = new int[b.length() + 1];
         for (int j = 0; j < costs.length; j++) costs[j] = j;
@@ -512,6 +509,11 @@ public class PlayActivity extends AppCompatActivity {
         }
 
         realTimeHandler.removeCallbacks(realTimeRunnable);
+
+        // FIX: Releases memory segments bound to native text recognizer components
+        if (textRecognizer != null) {
+            textRecognizer.close();
+        }
         if (cameraExecutor != null) {
             cameraExecutor.shutdown();
         }
