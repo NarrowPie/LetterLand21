@@ -345,7 +345,7 @@ public class PlayActivity extends AppCompatActivity {
                     String rawWord = element.getText().toUpperCase().replaceAll("[^A-Z]", "");
                     String smartWord = findClosestWord(rawWord);
 
-                    if (!smartWord.isEmpty() && smartWord.length() <= 10) {
+                    if (!smartWord.isEmpty() && smartWord.length() <= 13) {
                         Rect wordBox = element.getBoundingBox();
                         if (wordBox != null) {
                             float wordCenterX = wordBox.exactCenterX();

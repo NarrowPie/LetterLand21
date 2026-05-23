@@ -18,9 +18,19 @@ public interface LogDao {
     @Delete
     void deleteLog(LogEntry log);
 
+    // 🌟 FIX Query 1: Safely updates the name only if it exists at the absolute end of the details string
+    @Query("UPDATE log_table SET details = substr(details, 1, length(details) - length(:oldName)) || :newName WHERE details LIKE '%|' || :oldName")
+    void updateTrailingProfileName(String oldName, String newName);
 
-    @Query("UPDATE log_table SET details = REPLACE(details, '|' || :oldName, '|' || :newName) WHERE details LIKE '%|' || :oldName")
-    void updateProfileNameInLogs(String oldName, String newName);
+    // 🌟 FIX Query 2: Safely updates the name only if it is bounded on both sides by pipes in the middle of a string
+    @Query("UPDATE log_table SET details = REPLACE(details, '|' || :oldName || '|', '|' || :newName || '|') WHERE details LIKE '%|' || :oldName || '|%'")
+    void updateMiddleProfileName(String oldName, String newName);
+
+    // Coordinates both queries cleanly without breaking your existing ProfilesActivity method calls
+    default void updateProfileNameInLogs(String oldName, String newName) {
+        updateTrailingProfileName(oldName, newName);
+        updateMiddleProfileName(oldName, newName);
+    }
 
     // --- USER LOG QUERY ---
     @Query("SELECT * FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD') ORDER BY timestamp DESC")
