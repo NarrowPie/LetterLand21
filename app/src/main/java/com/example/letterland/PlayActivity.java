@@ -3,10 +3,6 @@ package com.example.letterland;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.ColorMatrix;
-import android.graphics.ColorMatrixColorFilter;
-import android.graphics.Paint;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.os.Bundle;
@@ -105,7 +101,6 @@ public class PlayActivity extends AppCompatActivity {
 
             try {
                 String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-                // FIX: Guard with application context to shield from configuration crashes
                 List<WordEntry> savedWords = AppDatabase.getInstance(this.getApplicationContext()).wordDao().getAllWordsForProfile(player);
 
                 for (WordEntry entry : savedWords) {
@@ -123,7 +118,8 @@ public class PlayActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_play);
 
-        cameraExecutor = Executors.newSingleThreadExecutor();
+        // Fixed thread pool keeps database operations reactive while frame processing flows sequentially
+        cameraExecutor = Executors.newFixedThreadPool(3);
         loadDictionaryFromAssets();
 
         viewFinder = findViewById(R.id.viewFinder);
@@ -174,7 +170,6 @@ public class PlayActivity extends AppCompatActivity {
 
             cameraExecutor.execute(() -> {
                 String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-                // FIX: Bound layout query pipeline to the global Application Context
                 WordEntry savedWord = AppDatabase.getInstance(this.getApplicationContext()).wordDao().findWordForProfile(wordToSearch, player);
 
                 runOnUiThread(() -> {
@@ -247,30 +242,6 @@ public class PlayActivity extends AppCompatActivity {
         }, ContextCompat.getMainExecutor(this));
     }
 
-    private Bitmap enhanceImageForOCR(Bitmap original) {
-        Bitmap enhanced = Bitmap.createBitmap(original.getWidth(), original.getHeight(), original.getConfig());
-        Canvas canvas = new Canvas(enhanced);
-        Paint paint = new Paint();
-
-        ColorMatrix colorMatrix = new ColorMatrix();
-        colorMatrix.setSaturation(0);
-
-        float contrast = 2.0f;
-        float translate = (-0.5f * contrast + 0.5f) * 255f;
-        ColorMatrix contrastMatrix = new ColorMatrix(new float[] {
-                contrast, 0, 0, 0, translate,
-                0, contrast, 0, 0, translate,
-                0, 0, contrast, 0, translate,
-                0, 0, 0, 1, 0
-        });
-
-        colorMatrix.postConcat(contrastMatrix);
-        paint.setColorFilter(new ColorMatrixColorFilter(colorMatrix));
-
-        canvas.drawBitmap(original, 0, 0, paint);
-        return enhanced;
-    }
-
     private final Runnable realTimeRunnable = new Runnable() {
         @Override
         public void run() {
@@ -278,7 +249,7 @@ public class PlayActivity extends AppCompatActivity {
 
             final Bitmap fullBitmap = viewFinder.getBitmap();
             if (fullBitmap == null) {
-                realTimeHandler.postDelayed(this, 300);
+                getNextFrameDelayed();
                 return;
             }
 
@@ -291,41 +262,47 @@ public class PlayActivity extends AppCompatActivity {
 
             if (width <= 0 || height <= 0 || startX < 0 || startY < 0) {
                 fullBitmap.recycle();
-                realTimeHandler.postDelayed(this, 300);
+                getNextFrameDelayed();
                 return;
             }
 
-            // FIX: Pushed Bitmap cropping entirely into the executor thread pool to unlock UI fluid response loops
             cameraExecutor.execute(() -> {
                 if (isFinishing() || isDestroyed()) {
                     fullBitmap.recycle();
                     return;
                 }
 
-                Bitmap croppedBitmap = Bitmap.createBitmap(fullBitmap, startX, startY, width, height);
-                fullBitmap.recycle(); // Safe memory cleaning layout execution
+                try {
+                    Bitmap croppedBitmap = Bitmap.createBitmap(fullBitmap, startX, startY, width, height);
+                    fullBitmap.recycle();
 
-                Bitmap cleanedBitmap = enhanceImageForOCR(croppedBitmap);
-                InputImage image = InputImage.fromBitmap(cleanedBitmap, 0);
+                    InputImage image = InputImage.fromBitmap(croppedBitmap, 0);
 
-                textRecognizer.process(image)
-                        .addOnSuccessListener(cameraExecutor, visionText -> {
-                            processVisionTextInBackground(visionText, width, height);
-                        })
-                        .addOnCompleteListener(task -> {
-                            croppedBitmap.recycle();
-                            cleanedBitmap.recycle();
-
-                            if (!isScanningPaused) {
-                                realTimeHandler.postDelayed(realTimeRunnable, 300);
-                            }
-                        });
+                    textRecognizer.process(image)
+                            .addOnCompleteListener(cameraExecutor, task -> {
+                                croppedBitmap.recycle();
+                                // If processing fails completely, unlock the loop immediately
+                                if (!task.isSuccessful()) {
+                                    getNextFrameDelayed();
+                                }
+                            })
+                            .addOnSuccessListener(cameraExecutor, visionText -> {
+                                processVisionTextInBackground(visionText, width, height);
+                            });
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    fullBitmap.recycle();
+                    getNextFrameDelayed();
+                }
             });
         }
     };
 
     private void processVisionTextInBackground(Text visionText, int cropWidth, int cropHeight) {
-        if (isScanningPaused || isFinishing() || isDestroyed()) return;
+        if (isScanningPaused || isFinishing() || isDestroyed()) {
+            getNextFrameDelayed();
+            return;
+        }
 
         String bestWord = "";
         Rect bestBox = null;
@@ -333,7 +310,6 @@ public class PlayActivity extends AppCompatActivity {
 
         float targetX = cropWidth / 2f;
         float targetY = cropHeight / 2f;
-
         if (manualFocusPoint != null) {
             targetX = manualFocusPoint.x;
             targetY = manualFocusPoint.y;
@@ -342,21 +318,24 @@ public class PlayActivity extends AppCompatActivity {
         for (Text.TextBlock block : visionText.getTextBlocks()) {
             for (Text.Line line : block.getLines()) {
                 for (Text.Element element : line.getElements()) {
-                    String rawWord = element.getText().toUpperCase().replaceAll("[^A-Z]", "");
-                    String smartWord = findClosestWord(rawWord);
+                    Rect wordBox = element.getBoundingBox();
+                    if (wordBox != null) {
+                        float wordCenterX = wordBox.exactCenterX();
+                        float wordCenterY = wordBox.exactCenterY();
+                        float dx = wordCenterX - targetX;
+                        float dy = wordCenterY - targetY;
+                        float distance = (dx * dx) + (dy * dy);
 
-                    if (!smartWord.isEmpty() && smartWord.length() <= 13) {
-                        Rect wordBox = element.getBoundingBox();
-                        if (wordBox != null) {
-                            float wordCenterX = wordBox.exactCenterX();
-                            float wordCenterY = wordBox.exactCenterY();
-                            float dx = wordCenterX - targetX;
-                            float dy = wordCenterY - targetY;
-                            float distance = (dx * dx) + (dy * dy);
-                            if (distance < closestDistance) {
-                                closestDistance = distance;
-                                bestWord = smartWord;
-                                bestBox = wordBox;
+                        // Checks location distance boundaries before executing heavier fuzzy matching string logic
+                        if (distance < closestDistance) {
+                            String rawWord = element.getText().toUpperCase().replaceAll("[^A-Z]", "");
+                            if (!rawWord.isEmpty()) {
+                                String smartWord = findClosestWord(rawWord);
+                                if (!smartWord.isEmpty() && smartWord.length() <= 13) {
+                                    closestDistance = distance;
+                                    bestWord = smartWord;
+                                    bestBox = wordBox;
+                                }
                             }
                         }
                     }
@@ -384,7 +363,17 @@ public class PlayActivity extends AppCompatActivity {
                 currentlyHighlightedWord = "";
                 highlightBox.setVisibility(View.GONE);
             }
+
+            // CRITICAL HANDSHAKE: Request the next frame ONLY after the current UI work is perfectly finalized
+            getNextFrameDelayed();
         });
+    }
+
+    private void getNextFrameDelayed() {
+        if (!isScanningPaused && !isFinishing() && !isDestroyed()) {
+            realTimeHandler.removeCallbacks(realTimeRunnable);
+            realTimeHandler.postDelayed(realTimeRunnable, 250); // 250ms cadence offers crisp updates without overloading layout pipes
+        }
     }
 
     private void startRealTimeScanning() {
@@ -413,7 +402,6 @@ public class PlayActivity extends AppCompatActivity {
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
             WordEntry newEntry = new WordEntry(word, player, file.getAbsolutePath());
 
-            // FIX: Bound saving routines to clean AppContext
             AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
             db.wordDao().insert(newEntry);
 
@@ -510,7 +498,6 @@ public class PlayActivity extends AppCompatActivity {
 
         realTimeHandler.removeCallbacks(realTimeRunnable);
 
-        // FIX: Releases memory segments bound to native text recognizer components
         if (textRecognizer != null) {
             textRecognizer.close();
         }
