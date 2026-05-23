@@ -14,21 +14,30 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import com.bumptech.glide.Glide;
 import com.google.android.material.button.MaterialButton;
+import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class DeletedLogsActivity extends AppCompatActivity {
 
     private RecyclerView rvDeletedLogs;
     private DeletedLogAdapter adapter;
 
+    // FIX: Assigned window builder reference directly to a class tracking variable to prevent bad-token failures
+    private AlertDialog restoreConfirmationDialog;
+    private ExecutorService deletedLogExecutor;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_deleted_logs);
+
+        deletedLogExecutor = Executors.newSingleThreadExecutor();
 
         MaterialButton btnBack = findViewById(R.id.btnDeletedLogsBack);
         rvDeletedLogs = findViewById(R.id.rvDeletedLogs);
@@ -43,8 +52,9 @@ public class DeletedLogsActivity extends AppCompatActivity {
     }
 
     private void loadLogs() {
-        new Thread(() -> {
-            List<LogEntry> allLogs = AppDatabase.getInstance(this).logDao().getAllLogs();
+        // FIX: Swapped unmanaged background thread instantiation for executor calls
+        deletedLogExecutor.execute(() -> {
+            List<LogEntry> allLogs = AppDatabase.getInstance(this.getApplicationContext()).logDao().getAllLogs();
             List<LogEntry> deletedLogs = new ArrayList<>();
 
             for (LogEntry log : allLogs) {
@@ -54,66 +64,80 @@ public class DeletedLogsActivity extends AppCompatActivity {
             }
 
             runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
                 adapter = new DeletedLogAdapter(deletedLogs);
                 rvDeletedLogs.setAdapter(adapter);
             });
-        }).start();
+        });
     }
 
     private void showRestoreDialog(LogEntry log, String wordName, String imagePath, String profileName, String deleterName) {
+        if (isFinishing() || isDestroyed()) return;
+
         View view = LayoutInflater.from(this).inflate(R.layout.dialog_restore_item, null);
-        AlertDialog dialog = new AlertDialog.Builder(this)
+
+        restoreConfirmationDialog = new AlertDialog.Builder(this)
                 .setView(view)
                 .create();
 
-        if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        if (restoreConfirmationDialog.getWindow() != null) {
+            restoreConfirmationDialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
         }
 
         ImageView ivRestoreImage = view.findViewById(R.id.ivRestoreImage);
         TextView tvRestoreDetails = view.findViewById(R.id.tvRestoreDetails);
 
-        // Loads original high-quality image file into dialog container view
-        Glide.with(this).load(imagePath).into(ivRestoreImage);
+        // FIX: Pass standard local File definitions rather than bare text strings to ensure platform consistency
+        if (imagePath != null && !imagePath.isEmpty()) {
+            Glide.with(this).load(new File(imagePath)).into(ivRestoreImage);
+        }
 
-        // Displays clear collection data and explicit action tracing
         tvRestoreDetails.setText("Object: " + wordName + "\nPROFILE: " + profileName + "\nPROFILE: " + deleterName);
 
         view.findViewById(R.id.btnCancelRestore).setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
-            dialog.dismiss();
+            restoreConfirmationDialog.dismiss();
         });
 
         view.findViewById(R.id.btnConfirmRestore).setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
-            dialog.dismiss();
+            restoreConfirmationDialog.dismiss();
 
-            new Thread(() -> {
-                AppDatabase db = AppDatabase.getInstance(this);
+            deletedLogExecutor.execute(() -> {
+                AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
 
-                // 1. Verify user hasn't created another word under an identical text name
                 WordEntry existingWord = db.wordDao().findWordForProfile(wordName, profileName);
                 if (existingWord != null) {
                     runOnUiThread(() -> Toast.makeText(this, profileName + " already has a word named " + wordName + "!", Toast.LENGTH_LONG).show());
                     return;
                 }
 
-                // 2. Re-insert data back into user's specific Almanac table
                 WordEntry restoredWord = new WordEntry(wordName, profileName, imagePath);
                 db.wordDao().insert(restoredWord);
 
-                // 3. Purge target log from history and append a normal action restoration statement
                 db.logDao().deleteLog(log);
                 db.logDao().insertLog(new LogEntry("PLAYER_LOG", "RESTORED_WORD|" + wordName + " for " + profileName, System.currentTimeMillis()));
 
                 runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
                     Toast.makeText(this, wordName + " restored successfully for " + profileName + "!", Toast.LENGTH_SHORT).show();
                     loadLogs();
                 });
-            }).start();
+            });
         });
 
-        dialog.show();
+        restoreConfirmationDialog.show();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (restoreConfirmationDialog != null && restoreConfirmationDialog.isShowing()) {
+            restoreConfirmationDialog.dismiss();
+        }
+        if (deletedLogExecutor != null) {
+            deletedLogExecutor.shutdown();
+        }
+        super.onDestroy();
     }
 
     private class DeletedLogAdapter extends RecyclerView.Adapter<DeletedLogAdapter.LogViewHolder> {
@@ -136,7 +160,6 @@ public class DeletedLogsActivity extends AppCompatActivity {
             LogEntry log = logs.get(position);
             holder.tvDeletedTime.setText("Time: " + sdf.format(new Date(log.timestamp)));
 
-            // Extract 4-token array parts safely
             String[] parts = log.details.split("\\|");
 
             if (parts.length >= 2) {
@@ -147,13 +170,17 @@ public class DeletedLogsActivity extends AppCompatActivity {
 
                 holder.tvDeletedWord.setText("Deleted '" + wordName + "'\nPROFILE: " + deleterName);
 
-                Glide.with(DeletedLogsActivity.this)
-                        .load(imagePath)
-                        .override(150, 150) // Downscaled rendering optimization strictly limits main thread memory footprints
-                        .placeholder(R.drawable.admin_pic)
-                        .into(holder.ivDeletedImage);
+                // FIX: Glide parsing converted to standard platform File streams instead of ambiguous text path sequences
+                if (imagePath != null && !imagePath.isEmpty()) {
+                    Glide.with(DeletedLogsActivity.this)
+                            .load(new File(imagePath))
+                            .override(150, 150)
+                            .placeholder(R.drawable.admin_pic)
+                            .into(holder.ivDeletedImage);
+                } else {
+                    holder.ivDeletedImage.setImageResource(R.drawable.admin_pic);
+                }
 
-                // Bind click event mapping seamlessly to layout popup handlers
                 holder.itemView.setOnClickListener(v -> {
                     SoundManager.getInstance(DeletedLogsActivity.this).playClick();
                     showRestoreDialog(log, wordName, imagePath, profileName, deleterName);

@@ -46,9 +46,9 @@ public class MainActivity extends AppCompatActivity {
     private android.app.AlertDialog playOptionsDialog;
     private android.app.AlertDialog exitDialog;
     private android.app.AlertDialog adminPinDialog;
-    private android.app.AlertDialog rationaleDialog; // Added tracker to prevent memory leaks
+    private android.app.AlertDialog rationaleDialog;
 
-    // 🚀 UPDATED: Handles both normal denial and "Don't ask again" blocks cleanly
+    // Handles both normal denial and "Don't ask again" blocks cleanly
     private final ActivityResultLauncher<String[]> requestPermissionsLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), permissions -> {
                 boolean allGranted = true;
@@ -98,15 +98,15 @@ public class MainActivity extends AppCompatActivity {
                 Set<String> newProfiles = new HashSet<>();
                 newProfiles.add(newName);
 
-                // FIXED: Batched into a single unified transaction block to remove duplicate file disk calls
                 prefs.edit()
                         .putStringSet("ALL_PROFILES", newProfiles)
                         .putString("ACTIVE_PROFILE", newName)
                         .apply();
 
+                // FIX: Room initialization linked safely to Application Context to eliminate window memory leaks
                 databaseExecutor.execute(() -> {
                     LogEntry log = new LogEntry("PLAYER_LOG", "ADDED|" + newName, System.currentTimeMillis());
-                    AppDatabase.getInstance(MainActivity.this).logDao().insertLog(log);
+                    AppDatabase.getInstance(this.getApplicationContext()).logDao().insertLog(log);
                 });
 
                 updatePlayerBadge();
@@ -199,7 +199,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // Checks permission status efficiently
     private void checkAndRequestPermissions() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -211,15 +210,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // 🚀 NEW: Explains permission requirement and provides settings re-route link cleanly
     private void showPermissionRationaleDialog() {
-        // Build clear custom pop up windows smoothly
         android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
         builder.setTitle("Permissions Required");
         builder.setMessage("Camera and Microphone permissions are required to play LetterLand games. Please grant them to continue.");
         builder.setCancelable(false);
 
-        // Check if the user selected "Don't ask again" permanently
         boolean showSettingsOption = !ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA) ||
                 !ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO);
 
@@ -237,7 +233,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         builder.setNegativeButton("Exit", (dialog, which) -> {
-            // FIXED: Replaced finishAffinity() with finish() to preserve standard root activity lifecycle exits cleanly
             finish();
         });
 
@@ -283,15 +278,15 @@ public class MainActivity extends AppCompatActivity {
         if (btnQuiz != null && tvQuizHint != null) {
             btnQuiz.setEnabled(false);
 
-            // FIXED: Capture an unchangeable snapshot string value *before* executing the asynchronous thread
             final String threadSafePlayerProfile = prefs.getString("ACTIVE_PROFILE", "Default");
 
+            // FIX: Room initialization optimized via getApplicationContext() points to prevent leaking dead environments
             databaseExecutor.execute(() -> {
-                // Read from our safe locked snapshot value rather than polling fluctuating UI state inside a thread worker
-                java.util.List<?> profileWords = AppDatabase.getInstance(MainActivity.this).wordDao().getAllWordsForProfile(threadSafePlayerProfile);
-                int wordCount = (profileWords != null) ? profileWords.size() : 0; // Guard against NullPointer safety bugs
+                java.util.List<?> profileWords = AppDatabase.getInstance(this.getApplicationContext()).wordDao().getAllWordsForProfile(threadSafePlayerProfile);
+                int wordCount = (profileWords != null) ? profileWords.size() : 0;
 
                 runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (wordCount >= 10) {
                         btnQuiz.setEnabled(true);
                         btnQuiz.setBackgroundTintList(ColorStateList.valueOf(ContextCompat.getColor(this, R.color.quiz_unlocked_purple)));
@@ -343,7 +338,6 @@ public class MainActivity extends AppCompatActivity {
         view.findViewById(R.id.btnConfirmExit).setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
             exitDialog.dismiss();
-            // FIXED: Changed to finish() for clean termination modeling
             finish();
         });
     }
@@ -415,11 +409,9 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         updatePlayerBadge();
 
-        // Only resume standard activity tasks if permissions are valid
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
 
-            // Cleanly dismiss the dialog overlay tracker if permissions were opened from system settings
             if (rationaleDialog != null && rationaleDialog.isShowing()) {
                 rationaleDialog.dismiss();
             }
@@ -435,7 +427,6 @@ public class MainActivity extends AppCompatActivity {
                 layoutOnboarding.setVisibility(View.VISIBLE);
             }
         } else {
-            // Re-evaluate if user is arriving from background settings toggle
             if (rationaleDialog == null || !rationaleDialog.isShowing()) {
                 checkAndRequestPermissions();
             }
@@ -452,19 +443,25 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        super.onDestroy();
         if (playOptionsDialog != null && playOptionsDialog.isShowing()) playOptionsDialog.dismiss();
         if (exitDialog != null && exitDialog.isShowing()) exitDialog.dismiss();
         if (adminPinDialog != null && adminPinDialog.isShowing()) adminPinDialog.dismiss();
         if (rationaleDialog != null && rationaleDialog.isShowing()) rationaleDialog.dismiss();
 
         if (mediaPlayer != null) {
-            mediaPlayer.stop();
+            try {
+                if (mediaPlayer.isPlaying()) {
+                    mediaPlayer.stop();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
             mediaPlayer.release();
             mediaPlayer = null;
         }
-        if (!databaseExecutor.isShutdown()) {
+        if (databaseExecutor != null) {
             databaseExecutor.shutdown();
         }
+        super.onDestroy();
     }
 }

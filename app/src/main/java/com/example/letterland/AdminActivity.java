@@ -18,6 +18,9 @@ public class AdminActivity extends AppCompatActivity {
     private long lastClickTime = 0;
     private AlertDialog pinDialog;
 
+    // FIX: Explicitly tracked class variable to prevent window leaked crashes during mutations
+    private AlertDialog wipePinDialog;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -31,8 +34,6 @@ public class AdminActivity extends AppCompatActivity {
         MaterialButton btnAdminAddObject = findViewById(R.id.btnAdminAddObject);
         MaterialButton btnEditAlmanac = findViewById(R.id.btnEditAlmanac);
         MaterialButton btnDeletedLogs = findViewById(R.id.btnDeletedLogs);
-
-        // 🌟 Initialize the new Manage Storage Button
         MaterialButton btnManageStorage = findViewById(R.id.btnManageStorage);
 
         btnBack.setOnClickListener(v -> {
@@ -85,13 +86,18 @@ public class AdminActivity extends AppCompatActivity {
             }
         });
 
+        btnChangePin.setOnClickListener(v -> {
+            if (isSpamClick()) return;
+            SoundManager.getInstance(this).playClick();
+            showChangePinDialog();
+        });
+
         btnDeletedLogs.setOnClickListener(v -> {
             if (isSpamClick()) return;
             SoundManager.getInstance(this).playClick();
             startActivity(new Intent(AdminActivity.this, DeletedLogsActivity.class));
         });
 
-        // 🌟 Click Listener for Manage Storage (Triggers PIN check)
         btnManageStorage.setOnClickListener(v -> {
             if (isSpamClick()) return;
             SoundManager.getInstance(this).playClick();
@@ -99,7 +105,6 @@ public class AdminActivity extends AppCompatActivity {
         });
     }
 
-    // Prevents double-taps and double-sounds
     private boolean isSpamClick() {
         long currentTime = System.currentTimeMillis();
         if (currentTime - lastClickTime < 500) {
@@ -161,10 +166,11 @@ public class AdminActivity extends AppCompatActivity {
         pinDialog.show();
     }
 
-    // 🌟 Custom PIN check opens the new Storage Management Screen!
     private void showConfirmWipeDialog() {
         View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_admin_pin, null);
-        AlertDialog wipePinDialog = new AlertDialog.Builder(this)
+
+        // FIX: Assigned window reference directly to class field token to handle rotation destruction safely
+        wipePinDialog = new AlertDialog.Builder(this)
                 .setView(dialogView)
                 .create();
 
@@ -190,7 +196,6 @@ public class AdminActivity extends AppCompatActivity {
 
             if (enteredPin.equals(savedPin)) {
                 wipePinDialog.dismiss();
-                // Launches the new screen
                 startActivity(new Intent(AdminActivity.this, StorageManagementActivity.class));
             } else {
                 Toast.makeText(this, "Incorrect PIN. Action blocked.", Toast.LENGTH_SHORT).show();
@@ -203,9 +208,13 @@ public class AdminActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        super.onDestroy();
+        // FIX: Cleanly teardown both visibility windows to avoid any native thread bad-tokens
         if (pinDialog != null && pinDialog.isShowing()) {
             pinDialog.dismiss();
         }
+        if (wipePinDialog != null && wipePinDialog.isShowing()) {
+            wipePinDialog.dismiss();
+        }
+        super.onDestroy();
     }
 }

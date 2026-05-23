@@ -1,6 +1,5 @@
 package com.example.letterland;
 
-import android.net.Uri;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -14,16 +13,21 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class AlmanacActivity extends AppCompatActivity {
 
     private RecyclerView rvAlmanac;
     private WordAdapter adapter;
-
-    // 🌟 TRACK FILTER STATE
     private boolean isShowingStarredOnly = false;
+
+    // FIX: Implemented persistent thread executor pool to manage room database callbacks safely
+    private ExecutorService almanacExecutor;
 
     @Override
     protected void onResume() {
@@ -36,16 +40,17 @@ public class AlmanacActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_almanac);
 
+        almanacExecutor = Executors.newSingleThreadExecutor();
+
         rvAlmanac = findViewById(R.id.rvAlmanac);
         ImageButton btnBack = findViewById(R.id.btnBackAlmanac);
-        ImageButton btnFilterStarred = findViewById(R.id.btnFilterStarred); // 🌟 LINK BUTTON
+        ImageButton btnFilterStarred = findViewById(R.id.btnFilterStarred);
 
         btnBack.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
             finish();
         });
 
-        // 🌟 FILTER BUTTON LOGIC
         btnFilterStarred.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
             isShowingStarredOnly = !isShowingStarredOnly;
@@ -70,29 +75,35 @@ public class AlmanacActivity extends AppCompatActivity {
     }
 
     private void loadWordsFromDatabase() {
-        new Thread(() -> {
+        // FIX: Replaced raw thread instantiations with handled background configurations
+        almanacExecutor.execute(() -> {
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
 
             List<WordEntry> myWords;
+            // FIX: Initialized database using non-leaking getApplicationContext() framework tokens
+            AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
+
             if (isShowingStarredOnly) {
-                // 🌟 GET ONLY STARRED WORDS
-                myWords = AppDatabase.getInstance(this).wordDao().getStarredWordsForProfile(player);
+                myWords = db.wordDao().getStarredWordsForProfile(player);
             } else {
-                // 🌟 GET ALL WORDS
-                myWords = AppDatabase.getInstance(this).wordDao().getAllWordsForProfile(player);
+                myWords = db.wordDao().getAllWordsForProfile(player);
             }
 
             runOnUiThread(() -> {
-                // 🛡️ Prevent crashes if user backs out immediately
                 if (isFinishing() || isDestroyed()) return;
                 adapter.updateData(myWords);
             });
-        }).start();
+        });
     }
 
-    // ==========================================
-    // 🌟 THE ALMANAC GRID ADAPTER
-    // ==========================================
+    @Override
+    protected void onDestroy() {
+        if (almanacExecutor != null) {
+            almanacExecutor.shutdown();
+        }
+        super.onDestroy();
+    }
+
     private class WordAdapter extends RecyclerView.Adapter<WordAdapter.WordViewHolder> {
         private List<WordEntry> words;
 
@@ -117,13 +128,17 @@ public class AlmanacActivity extends AppCompatActivity {
             WordEntry currentWord = words.get(position);
             holder.tvWord.setText(currentWord.word);
 
-            try {
-                holder.ivImage.setImageURI(Uri.parse(currentWord.imagePath));
-            } catch (Exception e) {
-                e.printStackTrace();
+            // FIX: Implemented Glide to translate raw absolute path locations smoothly without blocking the UI thread
+            if (currentWord.imagePath != null && !currentWord.imagePath.isEmpty()) {
+                Glide.with(holder.ivImage.getContext())
+                        .load(new File(currentWord.imagePath))
+                        .placeholder(R.drawable.admin_pic)
+                        .error(R.drawable.admin_pic)
+                        .into(holder.ivImage);
+            } else {
+                holder.ivImage.setImageResource(R.drawable.admin_pic);
             }
 
-            // 🌟 SHOW OR HIDE THE STAR BASED ON STATUS
             if (currentWord.isStarred) {
                 holder.ivStar.setVisibility(View.VISIBLE);
             } else {
@@ -148,7 +163,7 @@ public class AlmanacActivity extends AppCompatActivity {
         class WordViewHolder extends RecyclerView.ViewHolder {
             ImageView ivImage;
             TextView tvWord;
-            ImageView ivStar; // 🌟 LINK NEW ICON
+            ImageView ivStar;
 
             public WordViewHolder(@NonNull View itemView) {
                 super(itemView);

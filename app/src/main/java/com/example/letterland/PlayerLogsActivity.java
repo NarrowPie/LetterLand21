@@ -27,23 +27,29 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class PlayerLogsActivity extends AppCompatActivity {
 
     private RecyclerView rvPlayerLogs;
     private TextView tvEmptyLogs;
     private PlayerLogAdapter adapter;
-    private List<LogEntry> allLogs = new ArrayList<>();
+    private final List<LogEntry> allLogs = new ArrayList<>();
 
     private MaterialButton btnFilterAll, btnFilterDeleted, btnFilterAdded, btnFilterEdited;
     private long lastFilterTouchTime = 0;
+
+    // FIX: Managed workflow worker service handles filter conversions and safe database processing
+    private ExecutorService playerLogExecutor;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_player_logs);
 
-        // Bulletproof Back Button
+        playerLogExecutor = Executors.newSingleThreadExecutor();
+
         setSafeTouchListener(findViewById(R.id.btnBackPlayerLogs), this::finish);
 
         tvEmptyLogs = findViewById(R.id.tvEmptyLogs);
@@ -58,7 +64,6 @@ public class PlayerLogsActivity extends AppCompatActivity {
         btnFilterAdded = findViewById(R.id.btnFilterAdded);
         btnFilterEdited = findViewById(R.id.btnFilterEdited);
 
-        // Bulletproof Filter Buttons
         setSafeTouchListener(btnFilterAll, () -> applyFilter("ALL"));
         setSafeTouchListener(btnFilterDeleted, () -> applyFilter("DELETED"));
         setSafeTouchListener(btnFilterAdded, () -> applyFilter("ADDED"));
@@ -69,6 +74,7 @@ public class PlayerLogsActivity extends AppCompatActivity {
 
     @SuppressLint("ClickableViewAccessibility")
     private void setSafeTouchListener(View view, Runnable action) {
+        if (view == null) return;
         view.setOnClickListener(null);
         view.setOnTouchListener((v, event) -> {
             if (event.getAction() == MotionEvent.ACTION_UP) {
@@ -86,21 +92,25 @@ public class PlayerLogsActivity extends AppCompatActivity {
     }
 
     private void loadLogsFromDatabase() {
-        new Thread(() -> {
-            List<LogEntry> rawLogs = AppDatabase.getInstance(this).logDao().getAllLogs();
-            allLogs.clear();
+        // FIX: Replaced raw thread executions with explicit background service configurations
+        playerLogExecutor.execute(() -> {
+            // FIX: Prevent context reference leakage using getApplicationContext() points
+            List<LogEntry> rawLogs = AppDatabase.getInstance(this.getApplicationContext()).logDao().getAllLogs();
 
+            final List<LogEntry> updatedPlayerLogs = new ArrayList<>();
             for (LogEntry log : rawLogs) {
                 if ("PLAYER_LOG".equals(log.action)) {
-                    allLogs.add(log);
+                    updatedPlayerLogs.add(log);
                 }
             }
 
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
+                allLogs.clear();
+                allLogs.addAll(updatedPlayerLogs);
                 applyFilter("ALL");
             });
-        }).start();
+        });
     }
 
     private void applyFilter(String filterType) {
@@ -132,13 +142,17 @@ public class PlayerLogsActivity extends AppCompatActivity {
         }
     }
 
-    // ==========================================
-    // THE ADAPTER
-    // ==========================================
+    @Override
+    protected void onDestroy() {
+        if (playerLogExecutor != null) {
+            playerLogExecutor.shutdown();
+        }
+        super.onDestroy();
+    }
+
     private class PlayerLogAdapter extends RecyclerView.Adapter<PlayerLogAdapter.LogViewHolder> {
         private List<LogEntry> logs;
-        private SimpleDateFormat sdf = new SimpleDateFormat("MMM dd, yyyy - hh:mm a", Locale.US);
-
+        private final SimpleDateFormat sdf = new SimpleDateFormat("MMM dd, yyyy - hh:mm a", Locale.US);
         private long lastRestoreTouchTime = 0;
 
         public PlayerLogAdapter(List<LogEntry> logs) {
@@ -174,26 +188,23 @@ public class PlayerLogsActivity extends AppCompatActivity {
                 holder.tvLogAction.setTextColor(Color.parseColor("#F44336"));
                 holder.ivLogIcon.setColorFilter(Color.parseColor("#F44336"));
                 holder.ivLogIcon.setImageResource(android.R.drawable.ic_menu_delete);
-
                 holder.btnRestorePlayer.setVisibility(View.VISIBLE);
 
                 SharedPreferences prefs = getSharedPreferences("LetterLandMemory", MODE_PRIVATE);
                 Set<String> currentProfiles = prefs.getStringSet("ALL_PROFILES", new HashSet<>());
 
                 if (currentProfiles.contains(playerName)) {
-                    // 🌟 RESTORED VISUAL STATE
                     holder.btnRestorePlayer.setEnabled(false);
-                    holder.btnRestorePlayer.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#E0E0E0"))); // Light Gray
-                    holder.btnRestorePlayer.setTextColor(Color.parseColor("#4CAF50")); // Green Text
-                    holder.btnRestorePlayer.setIconResource(0); // Removes the icon
+                    holder.btnRestorePlayer.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#E0E0E0")));
+                    holder.btnRestorePlayer.setTextColor(Color.parseColor("#4CAF50"));
+                    holder.btnRestorePlayer.setIconResource(0);
                     holder.btnRestorePlayer.setText("RESTORED");
                 } else {
-                    // 🌟 ACTIVE VISUAL STATE
                     holder.btnRestorePlayer.setEnabled(true);
-                    holder.btnRestorePlayer.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#4CAF50"))); // Solid Green
-                    holder.btnRestorePlayer.setTextColor(Color.WHITE); // White Text
-                    holder.btnRestorePlayer.setIconResource(android.R.drawable.ic_menu_revert); // Show Icon
-                    holder.btnRestorePlayer.setIconTint(ColorStateList.valueOf(Color.WHITE)); // White Icon
+                    holder.btnRestorePlayer.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#4CAF50")));
+                    holder.btnRestorePlayer.setTextColor(Color.WHITE);
+                    holder.btnRestorePlayer.setIconResource(android.R.drawable.ic_menu_revert);
+                    holder.btnRestorePlayer.setIconTint(ColorStateList.valueOf(Color.WHITE));
                     holder.btnRestorePlayer.setText("RESTORE");
                 }
 
@@ -219,12 +230,10 @@ public class PlayerLogsActivity extends AppCompatActivity {
                 holder.btnRestorePlayer.setVisibility(View.GONE);
 
             } else if (type.equals("RENAMED_FROM")) {
-                // parts[1] (playerName) is the NEW name. parts[2] is the OLD name.
                 String oldName = parts.length > 2 ? parts[2] : "Unknown";
-
-                holder.tvLogPlayerName.setText(playerName); // 🌟 Sets Bold Title Header to NEW name (NATHANIELS)
-                holder.tvLogAction.setText("Renamed: " + playerName + " ➔ " + oldName); // 🌟 Sets description to Chronological Order (NATHANIEL ➔ NATHANIELS)
-                holder.tvLogAction.setTextColor(Color.parseColor("#FF9800")); // Warn/Info Orange Tint
+                holder.tvLogPlayerName.setText(playerName);
+                holder.tvLogAction.setText("Renamed: " + playerName + " ➔ " + oldName);
+                holder.tvLogAction.setTextColor(Color.parseColor("#FF9800"));
                 holder.ivLogIcon.setColorFilter(Color.parseColor("#FF9800"));
                 holder.ivLogIcon.setImageResource(android.R.drawable.ic_menu_edit);
                 holder.btnRestorePlayer.setVisibility(View.GONE);
@@ -241,15 +250,14 @@ public class PlayerLogsActivity extends AppCompatActivity {
 
                     SoundManager.getInstance(PlayerLogsActivity.this).playClick();
 
-                    // 🌟 INSTANTLY APPLY RESTORED VISUAL STATE ON CLICK
                     holder.btnRestorePlayer.setEnabled(false);
                     holder.btnRestorePlayer.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#E0E0E0")));
                     holder.btnRestorePlayer.setTextColor(Color.parseColor("#4CAF50"));
                     holder.btnRestorePlayer.setIconResource(0);
                     holder.btnRestorePlayer.setText("RESTORED");
 
-                    SharedPreferences prefs = getSharedPreferences("LetterLandMemory", MODE_PRIVATE);
-                    Set<String> oldProfiles = prefs.getStringSet("ALL_PROFILES", new HashSet<>());
+                    SharedPreferences sharedPrefs = getSharedPreferences("LetterLandMemory", MODE_PRIVATE);
+                    Set<String> oldProfiles = sharedPrefs.getStringSet("ALL_PROFILES", new HashSet<>());
                     Set<String> newProfiles = new HashSet<>(oldProfiles);
 
                     if (newProfiles.contains(playerName)) {
@@ -258,16 +266,21 @@ public class PlayerLogsActivity extends AppCompatActivity {
                     }
 
                     newProfiles.add(playerName);
-                    prefs.edit().putStringSet("ALL_PROFILES", newProfiles).apply();
+                    sharedPrefs.edit().putStringSet("ALL_PROFILES", newProfiles).apply();
 
                     Toast.makeText(PlayerLogsActivity.this, playerName + " has been RESTORED!", Toast.LENGTH_LONG).show();
 
-                    new Thread(() -> {
+                    // FIX: Transitioned thread management onto the safety pool
+                    playerLogExecutor.execute(() -> {
                         LogEntry restoredLog = new LogEntry("PLAYER_LOG", "RESTORED|" + playerName, System.currentTimeMillis());
-                        AppDatabase.getInstance(PlayerLogsActivity.this).logDao().insertLog(restoredLog);
+                        AppDatabase.getInstance(PlayerLogsActivity.this.getApplicationContext()).logDao().insertLog(restoredLog);
 
-                        runOnUiThread(PlayerLogsActivity.this::loadLogsFromDatabase);
-                    }).start();
+                        runOnUiThread(() -> {
+                            if (!isFinishing() && !isDestroyed()) {
+                                loadLogsFromDatabase();
+                            }
+                        });
+                    });
 
                     return true;
                 }
