@@ -18,8 +18,9 @@ public interface LogDao {
     @Delete
     void deleteLog(LogEntry log);
 
-    @Query("UPDATE log_table SET details = REPLACE(details, '|' || :oldName, '|' || :newName) WHERE action = 'DELETED WORD' AND details LIKE '%|' || :oldName")
-    void updateProfileNameInDeletedLogs(String oldName, String newName);
+
+    @Query("UPDATE log_table SET details = REPLACE(details, '|' || :oldName, '|' || :newName) WHERE details LIKE '%|' || :oldName")
+    void updateProfileNameInLogs(String oldName, String newName);
 
     // --- USER LOG QUERY ---
     @Query("SELECT * FROM log_table WHERE action IN ('ADDED WORD', 'EDITED WORD', 'ADMIN ADDED WORD') ORDER BY timestamp DESC")
