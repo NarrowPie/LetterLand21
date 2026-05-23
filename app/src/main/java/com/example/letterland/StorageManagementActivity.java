@@ -7,6 +7,8 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.Toast;
 import java.io.File;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -19,16 +21,20 @@ public class StorageManagementActivity extends AppCompatActivity {
     private long lastClickTime = 0;
 
     // 🌟 AUTOMATIC CONVEYOR BELT PRUNING THRESHOLDS
-    // You can adjust these numbers to control how many rows stay in your database tables.
-    private static final int HISTORY_LOGS_LIMIT = 100;       // Keeps the newest 100 word add/edit logs
-    private static final int PLAYER_ACTIVITY_LIMIT = 200;   // Keeps the newest 200 clicks/screens active logs
-    private static final int DELETED_ITEMS_LIMIT = 50;      // Keeps the newest 50 deleted word references
-    private static final int QUIZ_RECORDS_LIMIT = 50;       // Keeps the newest 50 quiz result history rows
+    private static final int HISTORY_LOGS_LIMIT = 100;
+    private static final int PLAYER_ACTIVITY_LIMIT = 200;
+    private static final int DELETED_ITEMS_LIMIT = 50;
+    private static final int QUIZ_RECORDS_LIMIT = 50;
+
+    // FIX: Managed thread background model to eliminate unmanaged context leaks
+    private ExecutorService storageExecutor;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_storage_management);
+
+        storageExecutor = Executors.newSingleThreadExecutor();
 
         // 🌟 TRIGGER: Fire off the conveyor belt queries automatically on screen load
         runAutomaticLogPruning();
@@ -64,25 +70,22 @@ public class StorageManagementActivity extends AppCompatActivity {
     }
 
     // 🌟 BACKGROUND AUTOMATION WORKER
-    // Runs cleanly on a background thread to prevent UI stutter or lag.
     private void runAutomaticLogPruning() {
-        new Thread(() -> {
+        storageExecutor.execute(() -> {
             try {
-                AppDatabase db = AppDatabase.getInstance(StorageManagementActivity.this);
+                // FIX: Room DB bound to global non-leaking Application Context reference
+                AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
 
-                // Fire the Conveyor Belt Queries defined in your LogDao interface
                 db.logDao().autoPruneHistoryLogs(HISTORY_LOGS_LIMIT);
                 db.logDao().autoPrunePlayerActivityLogs(PLAYER_ACTIVITY_LIMIT);
                 db.logDao().autoPruneDeletedItemLogs(DELETED_ITEMS_LIMIT);
-
-                // Fire the Conveyor Belt Query defined in your QuizRecordDao interface
                 db.quizRecordDao().autoPruneOldestRecords(QUIZ_RECORDS_LIMIT);
 
                 android.util.Log.d("StorageManagement", "Conveyor belt self-cleaning executed perfectly.");
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        }).start();
+        });
     }
 
     private boolean isSpamClick() {
@@ -97,19 +100,27 @@ public class StorageManagementActivity extends AppCompatActivity {
     // --- CACHE CLEARING LOGIC ---
     private void clearAppTemporaryCache() {
         Toast.makeText(this, "Clearing cache, please wait...", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
+
+        // FIX: Transferred disk cleaning execution away from unsafe raw background Thread closures
+        storageExecutor.execute(() -> {
             try {
-                Glide.get(StorageManagementActivity.this).clearDiskCache();
+                // FIX: Relinked Glide targets securely through the application context layer
+                Glide.get(this.getApplicationContext()).clearDiskCache();
                 deleteDirectoryTree(getCacheDir());
                 runOnUiThread(() -> {
-                    Glide.get(StorageManagementActivity.this).clearMemory();
-                    Toast.makeText(StorageManagementActivity.this, "App cache cleared successfully!", Toast.LENGTH_LONG).show();
+                    if (isFinishing() || isDestroyed()) return;
+                    Glide.get(this.getApplicationContext()).clearMemory();
+                    Toast.makeText(this, "App cache cleared successfully!", Toast.LENGTH_LONG).show();
                 });
             } catch (Exception e) {
                 e.printStackTrace();
-                runOnUiThread(() -> Toast.makeText(StorageManagementActivity.this, "Failed to completely clear cache.", Toast.LENGTH_SHORT).show());
+                runOnUiThread(() -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        Toast.makeText(this, "Failed to completely clear cache.", Toast.LENGTH_SHORT).show();
+                    }
+                });
             }
-        }).start();
+        });
     }
 
     private boolean deleteDirectoryTree(File dir) {
@@ -192,8 +203,8 @@ public class StorageManagementActivity extends AppCompatActivity {
     private void executePurge(int logTypeId, String title) {
         Toast.makeText(this, "Purging " + title + "...", Toast.LENGTH_SHORT).show();
 
-        new Thread(() -> {
-            AppDatabase db = AppDatabase.getInstance(StorageManagementActivity.this);
+        storageExecutor.execute(() -> {
+            AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
             try {
                 if (logTypeId == 1) {
                     db.logDao().deleteHistoryLogs();
@@ -206,16 +217,19 @@ public class StorageManagementActivity extends AppCompatActivity {
                 }
 
                 runOnUiThread(() -> {
-                    Toast.makeText(StorageManagementActivity.this, title + " wiped successfully!", Toast.LENGTH_LONG).show();
-
-                    // 🌟 TRIGGER RE-RUN: Re-run auto-pruning parameters to re-verify state limits after data gets wiped
+                    if (isFinishing() || isDestroyed()) return;
+                    Toast.makeText(this, title + " wiped successfully!", Toast.LENGTH_LONG).show();
                     runAutomaticLogPruning();
                 });
             } catch (Exception e) {
                 e.printStackTrace();
-                runOnUiThread(() -> Toast.makeText(StorageManagementActivity.this, "Failed to purge " + title, Toast.LENGTH_SHORT).show());
+                runOnUiThread(() -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        Toast.makeText(this, "Failed to purge " + title, Toast.LENGTH_SHORT).show();
+                    }
+                });
             }
-        }).start();
+        });
     }
 
     // --- FACTORY RESET SEQUENCE ---
@@ -237,28 +251,42 @@ public class StorageManagementActivity extends AppCompatActivity {
     private void executeFactoryReset() {
         Toast.makeText(this, "Initiating Factory Reset...", Toast.LENGTH_LONG).show();
 
-        new Thread(() -> {
+        storageExecutor.execute(() -> {
             try {
-                AppDatabase.getInstance(StorageManagementActivity.this).clearAllTables();
+                AppDatabase.getInstance(this.getApplicationContext()).clearAllTables();
 
                 SharedPreferences prefs = getSharedPreferences("LetterLandMemory", MODE_PRIVATE);
                 prefs.edit().clear().apply();
 
-                Glide.get(StorageManagementActivity.this).clearDiskCache();
+                Glide.get(this.getApplicationContext()).clearDiskCache();
                 deleteDirectoryTree(getCacheDir());
 
                 runOnUiThread(() -> {
-                    Glide.get(StorageManagementActivity.this).clearMemory();
-                    Toast.makeText(StorageManagementActivity.this, "SYSTEM RESET COMPLETE.", Toast.LENGTH_LONG).show();
+                    if (isFinishing() || isDestroyed()) return;
+                    Glide.get(this.getApplicationContext()).clearMemory();
+                    Toast.makeText(this, "SYSTEM RESET COMPLETE.", Toast.LENGTH_LONG).show();
 
-                    Intent intent = new Intent(StorageManagementActivity.this, MainActivity.class);
+                    Intent intent = new Intent(this, MainActivity.class);
                     intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                     startActivity(intent);
+                    finish();
                 });
             } catch (Exception e) {
                 e.printStackTrace();
-                runOnUiThread(() -> Toast.makeText(StorageManagementActivity.this, "Factory Reset Failed.", Toast.LENGTH_SHORT).show());
+                runOnUiThread(() -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        Toast.makeText(this, "Factory Reset Failed.", Toast.LENGTH_SHORT).show();
+                    }
+                });
             }
-        }).start();
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (storageExecutor != null) {
+            storageExecutor.shutdown();
+        }
+        super.onDestroy();
     }
 }

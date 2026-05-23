@@ -44,7 +44,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -55,11 +54,9 @@ public class QuizActivity extends AppCompatActivity {
     private ImageView ivQuizImage;
     private MaterialButton btnSpeakLiveText;
 
-    // Hangman Hint Display Elements
     private LinearLayout llHangmanContainer;
     private TextView tvHangmanMask;
     private DigitalInkRecognizer recognizer;
-    // TTS Variables
     private TextToSpeech textToSpeech;
     private boolean isTtsReady = false;
     private final Handler scanHandler = new Handler(Looper.getMainLooper());
@@ -72,19 +69,16 @@ public class QuizActivity extends AppCompatActivity {
     private int currentQuestionIndex = 0;
     private String currentlyDetectedWord = "";
 
-    // Thread Manager & Dialog Trackers to prevent memory leaks
     private final ExecutorService databaseExecutor = Executors.newSingleThreadExecutor();
     private Dialog lockedDialog;
     private Dialog zoomDialog;
     private AlertDialog confirmDialog;
 
-    // Bumper Variables
     private View layoutBumper;
     private TextView tvBumperLoading;
     private ProgressBar pbBumperLoading;
     private MaterialButton btnBumperStart;
     private boolean isFirstLevelLoaded = false;
-    // Handicap State Trackers
     private String targetSolutionWord = "";
     private char[] currentMaskedDisplayArray;
 
@@ -98,10 +92,8 @@ public class QuizActivity extends AppCompatActivity {
         tvProgress = findViewById(R.id.tvQuizProgress);
         ivQuizImage = findViewById(R.id.ivQuizImage);
         btnSpeakLiveText = findViewById(R.id.btnSpeakLiveText);
-        // Bind Puzzle Containers
         llHangmanContainer = findViewById(R.id.llHangmanContainer);
         tvHangmanMask = findViewById(R.id.tvHangmanMask);
-        // Setup Bumper UI
         layoutBumper = findViewById(R.id.layoutBumper);
         tvBumperLoading = findViewById(R.id.tvBumperLoading);
         pbBumperLoading = findViewById(R.id.pbBumperLoading);
@@ -233,7 +225,9 @@ public class QuizActivity extends AppCompatActivity {
 
         databaseExecutor.execute(() -> {
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-            List<WordEntry> quizReadyWords = AppDatabase.getInstance(this).wordDao().getStarredWordsForProfile(player);
+
+            // FIX: Linked context mapping cleanly to Application Context instead of the literal Activity context frame
+            List<WordEntry> quizReadyWords = AppDatabase.getInstance(this.getApplicationContext()).wordDao().getStarredWordsForProfile(player);
 
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
@@ -343,14 +337,12 @@ public class QuizActivity extends AppCompatActivity {
         }
     }
 
-    // 🌟 FUTURE-PROOF HANGMAN GENERATOR IMPLEMENTATION
     private void generatePuzzleMask(String word) {
         if (word == null || word.isEmpty()) return;
 
         int len = word.length();
         currentMaskedDisplayArray = new char[len];
 
-        // Fill layout with default blanks, leaving spaces untouched
         for (int i = 0; i < len; i++) {
             if (word.charAt(i) == ' ') {
                 currentMaskedDisplayArray[i] = ' ';
@@ -359,37 +351,30 @@ public class QuizActivity extends AppCompatActivity {
             }
         }
 
-        // Apply rules contextually based on strict index progression boundaries
         if (len <= 2) {
-            // Rule: 1 or 2 letters -> nothing revealed
             renderMaskedPuzzleField();
             return;
         }
 
         if (len == 3) {
-            // Rule: 3 letters -> 1st letter revealed
             currentMaskedDisplayArray[0] = word.charAt(0);
             renderMaskedPuzzleField();
             return;
         }
 
         if (len == 4) {
-            // Rule: 4 letters -> 1st and last letters revealed
             currentMaskedDisplayArray[0] = word.charAt(0);
             currentMaskedDisplayArray[3] = word.charAt(3);
             renderMaskedPuzzleField();
             return;
         }
 
-        // Rule: 5 letters or more -> 1st + last revealed + automated calculation loop
         if (len >= 5) {
             currentMaskedDisplayArray[0] = word.charAt(0);
             currentMaskedDisplayArray[len - 1] = word.charAt(len - 1);
 
-            // Automated Hint Ratio Curve: 5-6 -> 1 hint | 7-8 -> 2 hints | 9-10 -> 3 hints...
             int randomRevealsCount = (len - 3) / 2;
 
-            // Generate an available list of indexes restricted strictly to middle positions
             ArrayList<Integer> middleIndicesPool = new ArrayList<>();
             for (int i = 1; i < len - 1; i++) {
                 if (word.charAt(i) != ' ') {
@@ -397,10 +382,8 @@ public class QuizActivity extends AppCompatActivity {
                 }
             }
 
-            // Shuffle the safe targets list to select indices randomly without risk of duplicates
             Collections.shuffle(middleIndicesPool);
 
-            // Process calculated positions safely up to pool limit boundary constraints
             int revealsToProcess = Math.min(randomRevealsCount, middleIndicesPool.size());
             for (int i = 0; i < revealsToProcess; i++) {
                 int randomIndex = middleIndicesPool.get(i);
@@ -514,7 +497,9 @@ public class QuizActivity extends AppCompatActivity {
             long currentTime = System.currentTimeMillis();
 
             QuizRecord newRecord = new QuizRecord(player, score, correctAnswers.size(), currentTime, correctAnswers, userAnswers);
-            AppDatabase.getInstance(QuizActivity.this).quizRecordDao().insertRecord(newRecord);
+
+            // FIX: Bound final recording insertion routine safely to the parent Application Context reference
+            AppDatabase.getInstance(this.getApplicationContext()).quizRecordDao().insertRecord(newRecord);
 
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;

@@ -2,12 +2,11 @@ package com.example.letterland;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
+import android.graphics.ImageDecoder;
 import android.media.AudioAttributes;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.provider.MediaStore;
 import android.speech.tts.TextToSpeech;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -21,9 +20,12 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.bumptech.glide.Glide;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class WordDetailActivity extends AppCompatActivity {
 
@@ -36,11 +38,14 @@ public class WordDetailActivity extends AppCompatActivity {
     private TextView tvWord;
     private ImageView ivPicture;
 
+    // FIX: Managed background task executor instead of dangerous nested threads
+    private ExecutorService detailExecutor;
+
     private final ActivityResultLauncher<Void> takePictureLauncher = registerForActivityResult(
             new ActivityResultContracts.TakePicturePreview(),
             bitmap -> {
                 if (bitmap != null) {
-                    new Thread(() -> updateImageInDatabase(bitmap)).start();
+                    detailExecutor.execute(() -> updateImageInDatabase(bitmap));
                 } else {
                     Toast.makeText(this, "No picture taken", Toast.LENGTH_SHORT).show();
                 }
@@ -51,15 +56,17 @@ public class WordDetailActivity extends AppCompatActivity {
             new ActivityResultContracts.GetContent(),
             uri -> {
                 if (uri != null) {
-                    new Thread(() -> {
+                    // FIX: Replaced MediaStore.getBitmap with modern Scoped Storage compliant ImageDecoder framework
+                    detailExecutor.execute(() -> {
                         try {
-                            Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), uri);
+                            ImageDecoder.Source source = ImageDecoder.createSource(this.getContentResolver(), uri);
+                            Bitmap bitmap = ImageDecoder.decodeBitmap(source);
                             updateImageInDatabase(bitmap);
                         } catch (Exception e) {
                             e.printStackTrace();
                             runOnUiThread(() -> Toast.makeText(this, "Error loading image", Toast.LENGTH_SHORT).show());
                         }
-                    }).start();
+                    });
                 }
             }
     );
@@ -68,6 +75,9 @@ public class WordDetailActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_word_detail);
+
+        detailExecutor = Executors.newSingleThreadExecutor();
+
         ivPicture = findViewById(R.id.ivDetailPicture);
         tvWord = findViewById(R.id.tvDetailWord);
         View btnBack = findViewById(R.id.btnDetailBack);
@@ -92,35 +102,33 @@ public class WordDetailActivity extends AppCompatActivity {
         isNewWord = getIntent().getBooleanExtra("IS_NEW_WORD", false);
 
         if (wordText != null) tvWord.setText(wordText);
-        if (imagePath != null) {
-            File imgFile = new File(imagePath);
-            if (imgFile.exists()) {
-                ivPicture.setImageBitmap(BitmapFactory.decodeFile(imgFile.getAbsolutePath()));
-            } else {
-                ivPicture.setImageURI(Uri.parse(imagePath));
-            }
+
+        // FIX: Replaced synchronous main thread file path rendering with high performance Glide caching paths
+        if (imagePath != null && !imagePath.isEmpty()) {
+            Glide.with(this)
+                    .load(new File(imagePath))
+                    .placeholder(R.drawable.admin_pic)
+                    .error(R.drawable.admin_pic)
+                    .into(ivPicture);
         }
 
-        // CRITICAL FIX: Words discovered by kids default to UNSTARRED (false)
-        // Only the Admin Panel can change this flag via the administrative screens!
         if (isNewWord && ("WRITE".equals(sourcePage) || "SCANNER".equals(sourcePage))) {
-            new Thread(() -> {
+            detailExecutor.execute(() -> {
                 try {
                     String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-                    WordEntry checkExist = AppDatabase.getInstance(this).wordDao().findWordForProfile(wordText, player);
+                    // FIX: Wrapped Room context queries via getApplicationContext() to isolate leaks
+                    AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
+                    WordEntry checkExist = db.wordDao().findWordForProfile(wordText, player);
 
                     if (checkExist == null) {
                         WordEntry newEntry = new WordEntry(wordText, player, imagePath);
-
-                        // FIXED HERE: Forces default state to false! Child cannot auto-star items anymore.
                         newEntry.isStarred = false;
 
-                        AppDatabase.getInstance(this).wordDao().insert(newEntry);
+                        db.wordDao().insert(newEntry);
 
-                        // --- 🌟 ADDED USER HISTORY LOG FOR DISCOVERY TRACKING ---
                         try {
                             String logDetails = wordText + "|" + imagePath + "|" + player;
-                            AppDatabase.getInstance(this).logDao().insertLog(new LogEntry("ADDED WORD", logDetails, System.currentTimeMillis()));
+                            db.logDao().insertLog(new LogEntry("ADDED WORD", logDetails, System.currentTimeMillis()));
                         } catch (Exception logEx) {
                             logEx.printStackTrace();
                         }
@@ -130,12 +138,10 @@ public class WordDetailActivity extends AppCompatActivity {
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
-            }).start();
+            });
         }
 
-        // ==========================================
-        // SMART VISIBILITY LOGIC + UI CENTERING FIX
-        // ==========================================
+        // Layout controls setup
         if ("ALMANAC".equals(sourcePage)) {
             if (llScanControls != null) llScanControls.setVisibility(View.GONE);
             if (llWriteControls != null) llWriteControls.setVisibility(View.GONE);
@@ -209,7 +215,6 @@ public class WordDetailActivity extends AppCompatActivity {
                 }
 
                 if (wordText != null) {
-                    // Convert to lowercase right before passing to TTS to preserve fluent pronunciation
                     String optimizedString = wordText.trim().toLowerCase(Locale.US);
 
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -257,21 +262,22 @@ public class WordDetailActivity extends AppCompatActivity {
                             String newName = input.getText().toString().toUpperCase().trim();
 
                             if (!newName.isEmpty() && !newName.equals(wordText)) {
-                                new Thread(() -> {
+                                detailExecutor.execute(() -> {
                                     String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-                                    WordEntry checkExisting = AppDatabase.getInstance(this).wordDao().findWordForProfile(newName, player);
+                                    AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
+                                    WordEntry checkExisting = db.wordDao().findWordForProfile(newName, player);
 
                                     if (checkExisting != null) {
                                         runOnUiThread(() -> {
                                             Toast.makeText(this, "The word '" + newName + "' already exists!\nPlease choose a different name.", Toast.LENGTH_LONG).show();
                                         });
                                     } else {
-                                        WordEntry oldEntry = AppDatabase.getInstance(this).wordDao().findWordForProfile(wordText, player);
+                                        WordEntry oldEntry = db.wordDao().findWordForProfile(wordText, player);
                                         if (oldEntry != null) {
                                             WordEntry newEntry = new WordEntry(newName, oldEntry.profileName, oldEntry.imagePath);
                                             newEntry.isStarred = oldEntry.isStarred;
-                                            AppDatabase.getInstance(this).wordDao().insert(newEntry);
-                                            AppDatabase.getInstance(this).wordDao().delete(oldEntry);
+                                            db.wordDao().insert(newEntry);
+                                            db.wordDao().delete(oldEntry);
 
                                             runOnUiThread(() -> {
                                                 wordText = newName;
@@ -280,7 +286,7 @@ public class WordDetailActivity extends AppCompatActivity {
                                             });
                                         }
                                     }
-                                }).start();
+                                });
                             }
                         })
                         .setNegativeButton("Cancel", null)
@@ -302,7 +308,6 @@ public class WordDetailActivity extends AppCompatActivity {
                     intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     startActivity(intent);
                 }
-
                 finish();
             });
         }
@@ -325,28 +330,27 @@ public class WordDetailActivity extends AppCompatActivity {
         dialogView.findViewById(R.id.btnConfirmDelete).setOnClickListener(v1 -> {
             SoundManager.getInstance(this).playClick();
             deleteDialog.dismiss();
-            deleteWordFromDatabase();
+            detailExecutor.execute(this::deleteWordFromDatabase);
         });
         deleteDialog.show();
     }
 
     private void deleteWordFromDatabase() {
-        new Thread(() -> {
-            String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
+        String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
+        AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
 
-            WordEntry entry = AppDatabase.getInstance(this).wordDao().findWordForProfile(wordText, player);
-            if (entry != null) {
-                AppDatabase.getInstance(this).wordDao().delete(entry);
+        WordEntry entry = db.wordDao().findWordForProfile(wordText, player);
+        if (entry != null) {
+            db.wordDao().delete(entry);
 
-                String logDetails = entry.word + "|" + entry.imagePath + "|" + entry.profileName;
-                AppDatabase.getInstance(this).logDao().insertLog(new LogEntry("DELETED WORD", logDetails, System.currentTimeMillis()));
-            }
+            String logDetails = entry.word + "|" + entry.imagePath + "|" + entry.profileName;
+            db.logDao().insertLog(new LogEntry("DELETED WORD", logDetails, System.currentTimeMillis()));
+        }
 
-            runOnUiThread(() -> {
-                android.widget.Toast.makeText(this, wordText + " deleted!", android.widget.Toast.LENGTH_SHORT).show();
-                finish();
-            });
-        }).start();
+        runOnUiThread(() -> {
+            Toast.makeText(this, wordText + " deleted!", Toast.LENGTH_SHORT).show();
+            finish();
+        });
     }
 
     private void updateImageInDatabase(Bitmap bitmap) {
@@ -358,24 +362,25 @@ public class WordDetailActivity extends AppCompatActivity {
             String newImagePath = file.getAbsolutePath();
 
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-            new Thread(() -> {
-                WordEntry oldEntry = AppDatabase.getInstance(this).wordDao().findWordForProfile(wordText, player);
-                boolean wasStarred = oldEntry != null && oldEntry.isStarred;
+            AppDatabase db = AppDatabase.getInstance(this.getApplicationContext());
 
-                WordEntry updatedEntry = new WordEntry(wordText, player, newImagePath);
-                updatedEntry.isStarred = wasStarred;
+            WordEntry oldEntry = db.wordDao().findWordForProfile(wordText, player);
+            boolean wasStarred = oldEntry != null && oldEntry.isStarred;
 
-                AppDatabase.getInstance(this).wordDao().insert(updatedEntry);
+            WordEntry updatedEntry = new WordEntry(wordText, player, newImagePath);
+            updatedEntry.isStarred = wasStarred;
 
-                runOnUiThread(() -> {
-                    imagePath = newImagePath;
-                    File imgFile = new File(imagePath);
-                    if (imgFile.exists()) {
-                        ivPicture.setImageBitmap(BitmapFactory.decodeFile(imgFile.getAbsolutePath()));
-                    }
-                    Toast.makeText(this, "Picture Updated!", Toast.LENGTH_SHORT).show();
-                });
-            }).start();
+            db.wordDao().insert(updatedEntry);
+
+            runOnUiThread(() -> {
+                imagePath = newImagePath;
+                Glide.with(this)
+                        .load(new File(imagePath))
+                        .placeholder(R.drawable.admin_pic)
+                        .error(R.drawable.admin_pic)
+                        .into(ivPicture);
+                Toast.makeText(this, "Picture Updated!", Toast.LENGTH_SHORT).show();
+            });
         } catch (java.io.IOException e) {
             e.printStackTrace();
             runOnUiThread(() -> Toast.makeText(this, "Error saving picture!", Toast.LENGTH_SHORT).show());
@@ -387,6 +392,9 @@ public class WordDetailActivity extends AppCompatActivity {
         if (textToSpeech != null) {
             textToSpeech.stop();
             textToSpeech.shutdown();
+        }
+        if (detailExecutor != null) {
+            detailExecutor.shutdown();
         }
         super.onDestroy();
     }
