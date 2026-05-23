@@ -393,7 +393,7 @@ public class WriteActivity extends AppCompatActivity {
                     }
 
                     // 🌟 PROTECTIVE CAP ENFORCED: Strict 12-letter limit bounds applied seamlessly
-                    if (cleanWord.length() > 12) {
+                    if (cleanWord.length() > 13) {
                         cleanWord = cleanWord.substring(0, 12);
                     }
 
