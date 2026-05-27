@@ -42,9 +42,16 @@ public class DrawingView extends View {
     private Ink.Builder inkBuilder = Ink.builder();
     private Ink.Stroke.Builder strokeBuilder;
 
-    // PHASE 1: BACKGROUND TRACING TEMPLATE VARIABLES
+    // BACKGROUND TRACING TEMPLATE VARIABLES
     private String tracingWord = "";
     private Paint tracingPaint;
+
+    // SIZING FIX: Base scale size made larger for young fine-motor accessibility
+    private final float baseTracingTextSize = 240f;
+
+    // OPTIMIZATION FIX: Permanent single-instance fields to eliminate drawing loop allocation jank
+    private final int[] magnifierLocation = new int[2];
+    private final Path magnifierClipPath = new Path();
 
     public interface OnDrawListener {
         void onDrawStarted();
@@ -84,11 +91,11 @@ public class DrawingView extends View {
         crosshairPaint.setStyle(Paint.Style.FILL);
         crosshairPaint.setAntiAlias(true);
 
-        // PHASE 1: INITIALIZE FAINT BACKGROUND TEXT DESIGN FOR KIDS
+        // INITIALIZE FAINT BACKGROUND TEXT DESIGN FOR KIDS
         tracingPaint = new Paint();
-        tracingPaint.setColor(Color.parseColor("#E0E0E0")); // Very light gray visual prompt
+        tracingPaint.setColor(Color.parseColor("#E0E0E0")); // Faint gray visual template
         tracingPaint.setAntiAlias(true);
-        tracingPaint.setTextSize(150f); // Large scale matching young fine-motor tracking
+        tracingPaint.setTextSize(baseTracingTextSize);
         tracingPaint.setTextAlign(Paint.Align.CENTER);
         tracingPaint.setStyle(Paint.Style.FILL);
         tracingPaint.setFakeBoldText(true);
@@ -107,7 +114,6 @@ public class DrawingView extends View {
             };
             magnifierOverlay.setClickable(false);
             magnifierOverlay.setFocusable(false);
-            // FIX: Prevent 'clipPath' from causing black screen bugs on Android 14+
             magnifierOverlay.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
             root.addView(magnifierOverlay, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -133,40 +139,51 @@ public class DrawingView extends View {
             }
             magnifierOverlay = null;
         }
-
         super.onDetachedFromWindow();
     }
 
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
+
+        // CRITICAL PERFORMANCE GUARD: Block initialization if sizes are zero to stop initialization crash bounds
+        if (w <= 0 || h <= 0) return;
+
         canvasBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         drawCanvas = new Canvas(canvasBitmap);
-        drawCanvas.drawColor(Color.WHITE);
+        drawCanvas.drawColor(Color.TRANSPARENT);
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
-        canvas.drawBitmap(canvasBitmap, 0, 0, canvasPaint);
+        // 1. Draw solid white page canvas background first
+        canvas.drawColor(Color.WHITE);
 
-        // PHASE 1: RENDER FAINT BACKGROUND TRACING TEXT GUIDES UNDER FINGER STROKES
+        // 2. Render background tracing template guides UNDER finger strokes
         if (tracingWord != null && !tracingWord.isEmpty()) {
             float xPos = getWidth() / 2f;
             float yPos = (getHeight() / 2f) - ((tracingPaint.descent() + tracingPaint.ascent()) / 2f);
             canvas.drawText(tracingWord, xPos, yPos, tracingPaint);
         }
 
+        // 3. Render completed user pencil lines overlaying on top of the text template
+        if (canvasBitmap != null) {
+            canvas.drawBitmap(canvasBitmap, 0, 0, canvasPaint);
+        }
+
+        // 4. Render active stroke path currently being drawn
         canvas.drawPath(drawPath, drawPaint);
     }
 
     private void drawMagnifierOnOverlay(Canvas canvas) {
         if (!isDrawing) return;
         float magRadius = 240f;
-        int[] location = new int[2];
-        getLocationInWindow(location);
 
-        float screenX = currentX + location[0];
-        float screenY = currentY + location[1];
+        // OPTIMIZATION FIX: Reads coordinates directly into persistent field layout arrays
+        getLocationInWindow(magnifierLocation);
+
+        float screenX = currentX + magnifierLocation[0];
+        float screenY = currentY + magnifierLocation[1];
 
         float magX = screenX;
         float magY = screenY - 320f;
@@ -178,26 +195,28 @@ public class DrawingView extends View {
 
         canvas.save();
 
-        Path magClip = new Path();
-        magClip.addCircle(magX, magY, magRadius, Path.Direction.CW);
-        canvas.clipPath(magClip);
+        // OPTIMIZATION FIX: Recycles path calculations to maintain flawless high-FPS rendering
+        magnifierClipPath.reset();
+        magnifierClipPath.addCircle(magX, magY, magRadius, Path.Direction.CW);
+        canvas.clipPath(magnifierClipPath);
+
         canvas.drawColor(Color.WHITE);
 
         float zoom = 2.0f;
         canvas.translate(magX, magY);
         canvas.scale(zoom, zoom);
         canvas.translate(-screenX, -screenY);
-        canvas.translate(location[0], location[1]);
+        canvas.translate(magnifierLocation[0], magnifierLocation[1]);
 
-        canvas.drawBitmap(canvasBitmap, 0, 0, canvasPaint);
-
-        // PHASE 1: ALSO RENDER THE GUIDE INSIDE THE ZOOM LENS SO IT STAYS ALIGNED
         if (tracingWord != null && !tracingWord.isEmpty()) {
             float xPos = getWidth() / 2f;
             float yPos = (getHeight() / 2f) - ((tracingPaint.descent() + tracingPaint.ascent()) / 2f);
             canvas.drawText(tracingWord, xPos, yPos, tracingPaint);
         }
 
+        if (canvasBitmap != null) {
+            canvas.drawBitmap(canvasBitmap, 0, 0, canvasPaint);
+        }
         canvas.drawPath(drawPath, drawPaint);
 
         canvas.restore();
@@ -245,7 +264,9 @@ public class DrawingView extends View {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 isDrawing = false;
-                drawCanvas.drawPath(drawPath, drawPaint);
+                if (drawCanvas != null) {
+                    drawCanvas.drawPath(drawPath, drawPaint);
+                }
                 drawPath.reset();
 
                 if (strokeBuilder != null) {
@@ -266,27 +287,36 @@ public class DrawingView extends View {
         return true;
     }
 
-    // OPTIMIZATION: Consolidated single worker
-    //  FIXED: Clears drawing lines without layering white paint over the text guide canvas
     public void setTracingWord(String word) {
         this.tracingWord = word;
 
-        // Reset only the ink tracking data variables safely
         inkBuilder = Ink.builder();
         minX = Float.MAX_VALUE;
         minY = Float.MAX_VALUE;
         maxX = 0;
         maxY = 0;
 
-        // Re-clear the finger stroke canvas bitmap back to pure clean states
-        if (drawCanvas != null) {
-            drawCanvas.drawColor(Color.WHITE);
+        if (word != null) {
+            int length = word.length();
+            if (length >= 13) {
+                tracingPaint.setTextSize(baseTracingTextSize * 0.52f);
+            } else if (length >= 8) {
+                tracingPaint.setTextSize(baseTracingTextSize * 0.75f);
+            } else {
+                tracingPaint.setTextSize(baseTracingTextSize);
+            }
         }
 
-        invalidate(); // Forces immediate redraw on the main thread
+        if (canvasBitmap != null) {
+            canvasBitmap.eraseColor(Color.TRANSPARENT);
+        }
+        invalidate();
     }
+
     public void clearCanvas() {
-        drawCanvas.drawColor(Color.WHITE);
+        if (canvasBitmap != null) {
+            canvasBitmap.eraseColor(Color.TRANSPARENT);
+        }
         minX = Float.MAX_VALUE;
         minY = Float.MAX_VALUE;
         maxX = 0;
@@ -302,11 +332,16 @@ public class DrawingView extends View {
     }
 
     public Bitmap getBitmap() {
-        return canvasBitmap;
+        if (canvasBitmap == null) return null;
+        Bitmap whiteBgBitmap = Bitmap.createBitmap(canvasBitmap.getWidth(), canvasBitmap.getHeight(), Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(whiteBgBitmap);
+        c.drawColor(Color.WHITE);
+        c.drawBitmap(canvasBitmap, 0, 0, null);
+        return whiteBgBitmap;
     }
 
     public Bitmap getCroppedBitmap() {
-        if (maxX <= minX || maxY <= minY) return null;
+        if (maxX <= minX || maxY <= minY || canvasBitmap == null) return null;
         int left = (int) Math.max(0, minX);
         int top = (int) Math.max(0, minY);
         int right = (int) Math.min(canvasBitmap.getWidth(), maxX);
@@ -316,7 +351,12 @@ public class DrawingView extends View {
         int height = bottom - top;
         if (width <= 0 || height <= 0) return null;
 
-        return Bitmap.createBitmap(canvasBitmap, left, top, width, height);
+        Bitmap cropped = Bitmap.createBitmap(canvasBitmap, left, top, width, height);
+        Bitmap whiteBgCropped = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(whiteBgCropped);
+        c.drawColor(Color.WHITE);
+        c.drawBitmap(cropped, 0, 0, null);
+        return whiteBgCropped;
     }
 
     public Ink getInk() {

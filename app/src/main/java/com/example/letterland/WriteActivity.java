@@ -69,6 +69,9 @@ public class WriteActivity extends AppCompatActivity {
     private boolean isVoiceInputActive = false;
     private String rawVoiceOutputBuffer = "";
 
+    // SMART CLEAR FIX: Persistent memory holding onto the target tracing word across stroke rewrites
+    private String activeTracingWord = "";
+
     private TextToSpeech textToSpeech;
     private boolean isTtsReady = false;
 
@@ -76,7 +79,10 @@ public class WriteActivity extends AppCompatActivity {
     private boolean isProceedingLocked = false;
     private final Handler spamHandler = new Handler(Looper.getMainLooper());
 
-    // FIX: Managed thread model prevents leak profiles during component mutations
+    // OPTIMIZATION FIX: Track asynchronous execution runnables to clean context references on window pause
+    private Runnable autoProceedRunnable;
+
+    // Managed thread model prevents leak profiles during component mutations
     private ExecutorService databaseExecutor;
 
     private final ActivityResultLauncher<String> requestPermissionLauncher = registerForActivityResult(
@@ -190,7 +196,6 @@ public class WriteActivity extends AppCompatActivity {
             setupSpeechListener();
         }
 
-        // FIX: Shifted background setup onto the managed execution thread
         databaseExecutor.execute(this::loadDictionaryData);
         tvLiveText.setText("Loading Model...");
 
@@ -234,7 +239,22 @@ public class WriteActivity extends AppCompatActivity {
 
         btnClear.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
-            resetCanvasAndText();
+
+            if (!activeTracingWord.isEmpty()) {
+                if (drawingView.getInk().getStrokes().isEmpty()) {
+                    resetCanvasAndText();
+                } else {
+                    drawingView.resetFullCanvas();
+                    drawingView.setTracingWord(activeTracingWord);
+                    tvLiveText.setText(activeTracingWord);
+                    currentlyDetectedWord = activeTracingWord;
+                    lastSpokenLetter = "";
+                    lastSpokenWordLength = 0;
+                    isProceedingLocked = false;
+                }
+            } else {
+                resetCanvasAndText();
+            }
         });
 
         btnProceed.setOnClickListener(v -> {
@@ -243,7 +263,6 @@ public class WriteActivity extends AppCompatActivity {
                 return;
             }
 
-            // FIX: Prevent proceeding if the user hasn't drawn anything on the canvas yet
             if (drawingView.getInk().getStrokes().isEmpty()) {
                 Toast.makeText(this, "Write clearly first!", Toast.LENGTH_SHORT).show();
                 return;
@@ -281,7 +300,6 @@ public class WriteActivity extends AppCompatActivity {
 
         try {
             String player = getSharedPreferences("LetterLandMemory", MODE_PRIVATE).getString("ACTIVE_PROFILE", "Default");
-            // FIX: Applied application contexts to protect configuration cycles
             List<WordEntry> savedWords = AppDatabase.getInstance(this.getApplicationContext()).wordDao().getAllWordsForProfile(player);
             for (WordEntry entry : savedWords) {
                 DICTIONARY.add(entry.word.toUpperCase().trim());
@@ -297,7 +315,7 @@ public class WriteActivity extends AppCompatActivity {
             public void onReadyForSpeech(Bundle params) {
                 runOnUiThread(() -> {
                     if (tvVoiceStatus != null && rawVoiceOutputBuffer.isEmpty()) {
-                        tvVoiceStatus.setTextColor(Color.parseColor("#000000")); // Visible Black Text
+                        tvVoiceStatus.setTextColor(Color.parseColor("#000000"));
                         tvVoiceStatus.setText("Speak now!");
                     }
                 });
@@ -314,8 +332,8 @@ public class WriteActivity extends AppCompatActivity {
             public void onEndOfSpeech() {
                 runOnUiThread(() -> {
                     if (tvVoiceStatus != null && !rawVoiceOutputBuffer.isEmpty()) {
-                        tvVoiceStatus.setTextColor(Color.parseColor("#000000")); // Visible Black Text
-                        tvVoiceStatus.setText("Heard: " + rawVoiceOutputBuffer + "\nTap PROCEED to trace!");
+                        tvVoiceStatus.setTextColor(Color.parseColor("#000000"));
+                        tvVoiceStatus.setText("Heard: " + rawVoiceOutputBuffer + "\nAuto-proceeding...");
                     }
                 });
             }
@@ -326,15 +344,15 @@ public class WriteActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     switch (error) {
                         case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                            tvVoiceStatus.setTextColor(Color.parseColor("#4CAF50")); // Vibrant Green
+                            tvVoiceStatus.setTextColor(Color.parseColor("#4CAF50"));
                             tvVoiceStatus.setText("Please say your word!");
                             break;
                         case SpeechRecognizer.ERROR_NO_MATCH:
-                            tvVoiceStatus.setTextColor(Color.parseColor("#F44336")); // Vibrant Red
+                            tvVoiceStatus.setTextColor(Color.parseColor("#F44336"));
                             tvVoiceStatus.setText("Didn't catch that. Try again!");
                             break;
                         default:
-                            tvVoiceStatus.setTextColor(Color.parseColor("#FF9800")); // Vibrant Orange
+                            tvVoiceStatus.setTextColor(Color.parseColor("#FF9800"));
                             tvVoiceStatus.setText("Tap Retry to speak.");
                             break;
                     }
@@ -349,6 +367,10 @@ public class WriteActivity extends AppCompatActivity {
             @Override
             public void onResults(Bundle results) {
                 processVoiceResults(results);
+
+                // OPTIMIZATION FIX: Stores reference explicitly to flush task callbacks upon rotation or exit passes
+                autoProceedRunnable = () -> executeVoiceProceed(rawVoiceOutputBuffer);
+                scanHandler.postDelayed(autoProceedRunnable, 1000);
             }
 
             @Override
@@ -363,25 +385,22 @@ public class WriteActivity extends AppCompatActivity {
             rawVoiceOutputBuffer = cleanAndVerifySpeechInput(rawInput, matches);
 
             runOnUiThread(() -> {
-                tvVoiceStatus.setTextColor(Color.parseColor("#000000")); // Reset color to Black while typing
+                tvVoiceStatus.setTextColor(Color.parseColor("#000000"));
                 tvVoiceStatus.setText("Heard: " + rawVoiceOutputBuffer);
             });
         }
     }
 
     private String cleanAndVerifySpeechInput(String primeText, ArrayList<String> alternatives) {
-        // CRITICAL FIX: Actively convert digits to words for the main spoken text
         String input = replaceDigitsWithWords(primeText.toUpperCase().trim());
 
         for (String candidate : alternatives) {
-            // CRITICAL FIX: Actively convert digits to words for alternative matches
             String cleanCand = replaceDigitsWithWords(candidate.toUpperCase().trim());
             if (DICTIONARY.contains(cleanCand)) {
                 return cleanCand;
             }
         }
 
-        // Fix: Prevent compound number words (like "FORTY FIVE") from being chopped in half
         if (input.contains(" ") && !DICTIONARY.contains(input)) {
             boolean isNumberPhrase = false;
             String[] numberPrefixes = {
@@ -402,14 +421,13 @@ public class WriteActivity extends AppCompatActivity {
 
         return input;
     }
+
     private String replaceDigitsWithWords(String text) {
         if (text == null) return "";
         String result = text;
 
-        // --- 100 ---
         result = result.replace("100", "ONE HUNDRED");
 
-        // --- 90s ---
         result = result.replace("99", "NINETY NINE");
         result = result.replace("98", "NINETY EIGHT");
         result = result.replace("97", "NINETY SEVEN");
@@ -421,7 +439,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("91", "NINETY ONE");
         result = result.replace("90", "NINETY");
 
-        // --- 80s ---
         result = result.replace("89", "EIGHTY NINE");
         result = result.replace("88", "EIGHTY EIGHT");
         result = result.replace("87", "EIGHTY SEVEN");
@@ -433,7 +450,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("81", "EIGHTY ONE");
         result = result.replace("80", "EIGHTY");
 
-        // --- 70s ---
         result = result.replace("79", "SEVENTY NINE");
         result = result.replace("78", "SEVENTY EIGHT");
         result = result.replace("77", "SEVENTY SEVEN");
@@ -445,7 +461,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("71", "SEVENTY ONE");
         result = result.replace("70", "SEVENTY");
 
-        // --- 60s ---
         result = result.replace("69", "SIXTY NINE");
         result = result.replace("68", "SIXTY EIGHT");
         result = result.replace("67", "SIXTY SEVEN");
@@ -457,7 +472,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("61", "SIXTY ONE");
         result = result.replace("60", "SIXTY");
 
-        // --- 50s ---
         result = result.replace("59", "FIFTY NINE");
         result = result.replace("58", "FIFTY EIGHT");
         result = result.replace("57", "FIFTY SEVEN");
@@ -469,7 +483,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("51", "FIFTY ONE");
         result = result.replace("50", "FIFTY");
 
-        // --- 40s ---
         result = result.replace("49", "FORTY NINE");
         result = result.replace("48", "FORTY EIGHT");
         result = result.replace("47", "FORTY SEVEN");
@@ -481,7 +494,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("41", "FORTY ONE");
         result = result.replace("40", "FORTY");
 
-        // --- 30s ---
         result = result.replace("39", "THIRTY NINE");
         result = result.replace("38", "THIRTY EIGHT");
         result = result.replace("37", "THIRTY SEVEN");
@@ -493,7 +505,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("31", "THIRTY ONE");
         result = result.replace("30", "THIRTY");
 
-        // --- 20s ---
         result = result.replace("29", "TWENTY NINE");
         result = result.replace("28", "TWENTY EIGHT");
         result = result.replace("27", "TWENTY SEVEN");
@@ -505,7 +516,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("21", "TWENTY ONE");
         result = result.replace("20", "TWENTY");
 
-        // --- Teens & Clean Tens ---
         result = result.replace("19", "NINETEEN");
         result = result.replace("18", "EIGHTEEN");
         result = result.replace("17", "SEVENTEEN");
@@ -517,7 +527,6 @@ public class WriteActivity extends AppCompatActivity {
         result = result.replace("11", "ELEVEN");
         result = result.replace("10", "TEN");
 
-        // --- Single Digits ---
         result = result.replace("9", "NINE");
         result = result.replace("8", "EIGHT");
         result = result.replace("7", "SEVEN");
@@ -531,6 +540,7 @@ public class WriteActivity extends AppCompatActivity {
 
         return result;
     }
+
     private void performScan() {
         if (isFinishing() || isDestroyed() || recognizer == null) return;
         Ink ink = drawingView.getInk();
@@ -541,8 +551,8 @@ public class WriteActivity extends AppCompatActivity {
                     if (isFinishing() || isDestroyed() || result.getCandidates().isEmpty()) return;
 
                     String rawText = result.getCandidates().get(0).getText().toUpperCase().trim();
-                    rawText = rawText.replace("0", "O"); // Converts number zero to letter O
-                    rawText = rawText.replace("1", "I"); // Optional: Converts number one to letter I
+                    rawText = rawText.replace("0", "O");
+                    rawText = rawText.replace("1", "I");
                     rawText = rawText.replace("5", "S");
                     String cleanWord = rawText.replaceAll("[^A-Z]", "");
 
@@ -552,8 +562,8 @@ public class WriteActivity extends AppCompatActivity {
                         return;
                     }
 
-                    if (cleanWord.length() > 13) {
-                        cleanWord = cleanWord.substring(0, 12);
+                    if (cleanWord.length() > 20) {
+                        cleanWord = cleanWord.substring(0, 20);
                     }
 
                     isVoiceInputActive = false;
@@ -581,6 +591,36 @@ public class WriteActivity extends AppCompatActivity {
         }
     }
 
+    private void executeVoiceProceed(String word) {
+        runOnUiThread(() -> {
+            if (voiceDialog == null || !voiceDialog.isShowing()) return;
+
+            speechRecognizer.cancel();
+            voiceDialog.dismiss();
+
+            String verifiedWord = (word == null || word.isEmpty()) ? "MIC" : word;
+            verifiedWord = verifiedWord.replaceAll("[^A-Z]", "");
+
+            if (verifiedWord.length() > 13) {
+                verifiedWord = verifiedWord.substring(0, 13);
+            }
+
+            if (verifiedWord.isEmpty()) verifiedWord = "MIC";
+
+            isVoiceInputActive = true;
+            activeTracingWord = verifiedWord;
+            currentlyDetectedWord = verifiedWord;
+            tvLiveText.setText(verifiedWord);
+            drawingView.setTracingWord(verifiedWord);
+
+            if (isTtsReady) {
+                CharSequence spokenTarget = getNormalizedTtsText(verifiedWord);
+                CharSequence utterance = android.text.TextUtils.concat("Let's trace ", spokenTarget);
+                textToSpeech.speak(utterance, TextToSpeech.QUEUE_FLUSH, null, "VOICE_TRACE_ID");
+            }
+        });
+    }
+
     private void showCustomVoiceDialog() {
         if (speechRecognizer == null) return;
         rawVoiceOutputBuffer = "";
@@ -605,35 +645,18 @@ public class WriteActivity extends AppCompatActivity {
             speechRecognizer.cancel();
             voiceDialog.dismiss();
         });
+
         btnProceedVoice.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
-            speechRecognizer.cancel();
-
-            String verifiedWord = rawVoiceOutputBuffer.isEmpty() ? "MIC" : rawVoiceOutputBuffer;
-            voiceDialog.dismiss();
-
-            verifiedWord = verifiedWord.replaceAll("[^A-Z]", "");
-            if(verifiedWord.isEmpty()) verifiedWord = "MIC";
-
-            isVoiceInputActive = true;
-            currentlyDetectedWord = verifiedWord;
-            tvLiveText.setText(verifiedWord);
-            drawingView.setTracingWord(verifiedWord);
-
-            if (isTtsReady) {
-                // MODIFIED: Changed from String to CharSequence to allow TtsSpans
-                CharSequence spokenTarget = getNormalizedTtsText(verifiedWord);
-                // MODIFIED: Concatenates cleanly via TextUtils to prevent formatting loss
-                CharSequence utterance = android.text.TextUtils.concat("Let's trace ", spokenTarget);
-                textToSpeech.speak(utterance, TextToSpeech.QUEUE_FLUSH, null, "VOICE_TRACE_ID");
-            }
+            executeVoiceProceed(rawVoiceOutputBuffer);
         });
+
         btnRetryVoice.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
             speechRecognizer.cancel();
             rawVoiceOutputBuffer = "";
 
-            tvVoiceStatus.setTextColor(Color.parseColor("#000000")); // Reset color to Black immediately
+            tvVoiceStatus.setTextColor(Color.parseColor("#000000"));
             tvVoiceStatus.setText("Listening again...");
 
             speechRecognizer.startListening(speechIntent);
@@ -645,7 +668,6 @@ public class WriteActivity extends AppCompatActivity {
     }
 
     private void speakTextDirectly(String textToSpeak) {
-        // MODIFIED: References the dynamic CharSequence returned by getNormalizedTtsText
         CharSequence optimizedString = getNormalizedTtsText(textToSpeak);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             AudioAttributes audioAttributes = new AudioAttributes.Builder()
@@ -663,7 +685,6 @@ public class WriteActivity extends AppCompatActivity {
     }
 
     private void checkWordDatabase(String word) {
-        // FIX: Replaced explicit Thread calls with an optimized SingleThread executor
         databaseExecutor.execute(() -> {
             String targetWord = word.toUpperCase().trim();
 
@@ -764,6 +785,7 @@ public class WriteActivity extends AppCompatActivity {
         lastSpokenWordLength = 0;
         isVoiceInputActive = false;
         isProceedingLocked = false;
+        activeTracingWord = "";
     }
 
     @Override
@@ -780,6 +802,12 @@ public class WriteActivity extends AppCompatActivity {
         SoundManager.getInstance(this).stopScratchSound();
 
         spamHandler.removeCallbacksAndMessages(null);
+
+        // OPTIMIZATION FIX: Flush pending delayed handlers to remove explicit temporary window leaks
+        if (autoProceedRunnable != null) {
+            scanHandler.removeCallbacks(autoProceedRunnable);
+        }
+
         if (speechRecognizer != null) {
             speechRecognizer.cancel();
         }
@@ -794,7 +822,6 @@ public class WriteActivity extends AppCompatActivity {
             speechRecognizer.destroy();
         }
 
-        // FIX: Added model disposal pipelines to destroy native layout engines properly
         if (recognizer != null) {
             recognizer.close();
         }
@@ -804,7 +831,6 @@ public class WriteActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
-    // MODIFIED: Changed return type from String to CharSequence to preserve Spanned metadata formatting
     private CharSequence getNormalizedTtsText(String text) {
         if (text == null || text.trim().isEmpty()) {
             return "";
@@ -816,7 +842,6 @@ public class WriteActivity extends AppCompatActivity {
         return clean.toLowerCase(Locale.US);
     }
 
-    // FIXED: Swapped out non-existent class "AlphabetBuilder" for the official system class "VerbatimBuilder"
     private CharSequence mapIsolatedLetter(String text) {
         if (text == null || text.trim().length() != 1) {
             return text;
