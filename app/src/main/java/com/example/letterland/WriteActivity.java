@@ -295,9 +295,12 @@ public class WriteActivity extends AppCompatActivity {
         speechRecognizer.setRecognitionListener(new RecognitionListener() {
             @Override
             public void onReadyForSpeech(Bundle params) {
-                if (tvVoiceStatus != null && rawVoiceOutputBuffer.isEmpty()) {
-                    tvVoiceStatus.setText("Speak now!");
-                }
+                runOnUiThread(() -> {
+                    if (tvVoiceStatus != null && rawVoiceOutputBuffer.isEmpty()) {
+                        tvVoiceStatus.setTextColor(Color.parseColor("#000000")); // Visible Black Text
+                        tvVoiceStatus.setText("Speak now!");
+                    }
+                });
             }
 
             @Override
@@ -309,25 +312,33 @@ public class WriteActivity extends AppCompatActivity {
 
             @Override
             public void onEndOfSpeech() {
-                if (tvVoiceStatus != null && !rawVoiceOutputBuffer.isEmpty()) {
-                    tvVoiceStatus.setText("Heard: " + rawVoiceOutputBuffer + "\nTap PROCEED to trace!");
-                }
+                runOnUiThread(() -> {
+                    if (tvVoiceStatus != null && !rawVoiceOutputBuffer.isEmpty()) {
+                        tvVoiceStatus.setTextColor(Color.parseColor("#000000")); // Visible Black Text
+                        tvVoiceStatus.setText("Heard: " + rawVoiceOutputBuffer + "\nTap PROCEED to trace!");
+                    }
+                });
             }
 
             @Override
             public void onError(int error) {
                 if (tvVoiceStatus == null) return;
-                switch (error) {
-                    case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                        tvVoiceStatus.setText("Please say your word!");
-                        break;
-                    case SpeechRecognizer.ERROR_NO_MATCH:
-                        tvVoiceStatus.setText("Didn't catch that. Try again!");
-                        break;
-                    default:
-                        tvVoiceStatus.setText("Tap Retry to speak.");
-                        break;
-                }
+                runOnUiThread(() -> {
+                    switch (error) {
+                        case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+                            tvVoiceStatus.setTextColor(Color.parseColor("#4CAF50")); // Vibrant Green
+                            tvVoiceStatus.setText("Please say your word!");
+                            break;
+                        case SpeechRecognizer.ERROR_NO_MATCH:
+                            tvVoiceStatus.setTextColor(Color.parseColor("#F44336")); // Vibrant Red
+                            tvVoiceStatus.setText("Didn't catch that. Try again!");
+                            break;
+                        default:
+                            tvVoiceStatus.setTextColor(Color.parseColor("#FF9800")); // Vibrant Orange
+                            tvVoiceStatus.setText("Tap Retry to speak.");
+                            break;
+                    }
+                });
             }
 
             @Override
@@ -350,30 +361,176 @@ public class WriteActivity extends AppCompatActivity {
         if (matches != null && !matches.isEmpty() && tvVoiceStatus != null) {
             String rawInput = matches.get(0);
             rawVoiceOutputBuffer = cleanAndVerifySpeechInput(rawInput, matches);
-            tvVoiceStatus.setText("Heard: " + rawVoiceOutputBuffer);
+
+            runOnUiThread(() -> {
+                tvVoiceStatus.setTextColor(Color.parseColor("#000000")); // Reset color to Black while typing
+                tvVoiceStatus.setText("Heard: " + rawVoiceOutputBuffer);
+            });
         }
     }
 
     private String cleanAndVerifySpeechInput(String primeText, ArrayList<String> alternatives) {
-        String input = primeText.toUpperCase().trim();
+        // CRITICAL FIX: Actively convert digits to words for the main spoken text
+        String input = replaceDigitsWithWords(primeText.toUpperCase().trim());
+
         for (String candidate : alternatives) {
-            String cleanCand = candidate.toUpperCase().trim();
+            // CRITICAL FIX: Actively convert digits to words for alternative matches
+            String cleanCand = replaceDigitsWithWords(candidate.toUpperCase().trim());
             if (DICTIONARY.contains(cleanCand)) {
                 return cleanCand;
             }
         }
 
-        if (input.equals("RIGHT") || input.equals("RIDE") || input.equals("RITES")) {
-            return "WRITE";
-        }
-
+        // Fix: Prevent compound number words (like "FORTY FIVE") from being chopped in half
         if (input.contains(" ") && !DICTIONARY.contains(input)) {
-            input = input.substring(0, input.indexOf(" "));
+            boolean isNumberPhrase = false;
+            String[] numberPrefixes = {
+                    "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY", "ONE"
+            };
+
+            for (String prefix : numberPrefixes) {
+                if (input.startsWith(prefix)) {
+                    isNumberPhrase = true;
+                    break;
+                }
+            }
+
+            if (!isNumberPhrase) {
+                input = input.substring(0, input.indexOf(" "));
+            }
         }
 
         return input;
     }
+    private String replaceDigitsWithWords(String text) {
+        if (text == null) return "";
+        String result = text;
 
+        // --- 100 ---
+        result = result.replace("100", "ONE HUNDRED");
+
+        // --- 90s ---
+        result = result.replace("99", "NINETY NINE");
+        result = result.replace("98", "NINETY EIGHT");
+        result = result.replace("97", "NINETY SEVEN");
+        result = result.replace("96", "NINETY SIX");
+        result = result.replace("95", "NINETY FIVE");
+        result = result.replace("94", "NINETY FOUR");
+        result = result.replace("93", "NINETY THREE");
+        result = result.replace("92", "NINETY TWO");
+        result = result.replace("91", "NINETY ONE");
+        result = result.replace("90", "NINETY");
+
+        // --- 80s ---
+        result = result.replace("89", "EIGHTY NINE");
+        result = result.replace("88", "EIGHTY EIGHT");
+        result = result.replace("87", "EIGHTY SEVEN");
+        result = result.replace("86", "EIGHTY SIX");
+        result = result.replace("85", "EIGHTY FIVE");
+        result = result.replace("84", "EIGHTY FOUR");
+        result = result.replace("83", "EIGHTY THREE");
+        result = result.replace("82", "EIGHTY TWO");
+        result = result.replace("81", "EIGHTY ONE");
+        result = result.replace("80", "EIGHTY");
+
+        // --- 70s ---
+        result = result.replace("79", "SEVENTY NINE");
+        result = result.replace("78", "SEVENTY EIGHT");
+        result = result.replace("77", "SEVENTY SEVEN");
+        result = result.replace("76", "SEVENTY SIX");
+        result = result.replace("75", "SEVENTY FIVE");
+        result = result.replace("74", "SEVENTY FOUR");
+        result = result.replace("73", "SEVENTY THREE");
+        result = result.replace("72", "SEVENTY TWO");
+        result = result.replace("71", "SEVENTY ONE");
+        result = result.replace("70", "SEVENTY");
+
+        // --- 60s ---
+        result = result.replace("69", "SIXTY NINE");
+        result = result.replace("68", "SIXTY EIGHT");
+        result = result.replace("67", "SIXTY SEVEN");
+        result = result.replace("66", "SIXTY SIX");
+        result = result.replace("65", "SIXTY FIVE");
+        result = result.replace("64", "SIXTY FOUR");
+        result = result.replace("63", "SIXTY THREE");
+        result = result.replace("62", "SIXTY TWO");
+        result = result.replace("61", "SIXTY ONE");
+        result = result.replace("60", "SIXTY");
+
+        // --- 50s ---
+        result = result.replace("59", "FIFTY NINE");
+        result = result.replace("58", "FIFTY EIGHT");
+        result = result.replace("57", "FIFTY SEVEN");
+        result = result.replace("56", "FIFTY SIX");
+        result = result.replace("55", "FIFTY FIVE");
+        result = result.replace("54", "FIFTY FOUR");
+        result = result.replace("53", "FIFTY THREE");
+        result = result.replace("52", "FIFTY TWO");
+        result = result.replace("51", "FIFTY ONE");
+        result = result.replace("50", "FIFTY");
+
+        // --- 40s ---
+        result = result.replace("49", "FORTY NINE");
+        result = result.replace("48", "FORTY EIGHT");
+        result = result.replace("47", "FORTY SEVEN");
+        result = result.replace("46", "FORTY SIX");
+        result = result.replace("45", "FORTY FIVE");
+        result = result.replace("44", "FORTY FOUR");
+        result = result.replace("43", "FORTY THREE");
+        result = result.replace("42", "FORTY TWO");
+        result = result.replace("41", "FORTY ONE");
+        result = result.replace("40", "FORTY");
+
+        // --- 30s ---
+        result = result.replace("39", "THIRTY NINE");
+        result = result.replace("38", "THIRTY EIGHT");
+        result = result.replace("37", "THIRTY SEVEN");
+        result = result.replace("36", "THIRTY SIX");
+        result = result.replace("35", "THIRTY FIVE");
+        result = result.replace("34", "THIRTY FOUR");
+        result = result.replace("33", "THIRTY THREE");
+        result = result.replace("32", "THIRTY TWO");
+        result = result.replace("31", "THIRTY ONE");
+        result = result.replace("30", "THIRTY");
+
+        // --- 20s ---
+        result = result.replace("29", "TWENTY NINE");
+        result = result.replace("28", "TWENTY EIGHT");
+        result = result.replace("27", "TWENTY SEVEN");
+        result = result.replace("26", "TWENTY SIX");
+        result = result.replace("25", "TWENTY FIVE");
+        result = result.replace("24", "TWENTY FOUR");
+        result = result.replace("23", "TWENTY THREE");
+        result = result.replace("22", "TWENTY TWO");
+        result = result.replace("21", "TWENTY ONE");
+        result = result.replace("20", "TWENTY");
+
+        // --- Teens & Clean Tens ---
+        result = result.replace("19", "NINETEEN");
+        result = result.replace("18", "EIGHTEEN");
+        result = result.replace("17", "SEVENTEEN");
+        result = result.replace("16", "SIXTEEN");
+        result = result.replace("15", "FIFTEEN");
+        result = result.replace("14", "FOURTEEN");
+        result = result.replace("13", "THIRTEEN");
+        result = result.replace("12", "TWELVE");
+        result = result.replace("11", "ELEVEN");
+        result = result.replace("10", "TEN");
+
+        // --- Single Digits ---
+        result = result.replace("9", "NINE");
+        result = result.replace("8", "EIGHT");
+        result = result.replace("7", "SEVEN");
+        result = result.replace("6", "SIX");
+        result = result.replace("5", "FIVE");
+        result = result.replace("4", "FOUR");
+        result = result.replace("3", "THREE");
+        result = result.replace("2", "TWO");
+        result = result.replace("1", "ONE");
+        result = result.replace("0", "ZERO");
+
+        return result;
+    }
     private void performScan() {
         if (isFinishing() || isDestroyed() || recognizer == null) return;
         Ink ink = drawingView.getInk();
@@ -384,6 +541,9 @@ public class WriteActivity extends AppCompatActivity {
                     if (isFinishing() || isDestroyed() || result.getCandidates().isEmpty()) return;
 
                     String rawText = result.getCandidates().get(0).getText().toUpperCase().trim();
+                    rawText = rawText.replace("0", "O"); // Converts number zero to letter O
+                    rawText = rawText.replace("1", "I"); // Optional: Converts number one to letter I
+                    rawText = rawText.replace("5", "S");
                     String cleanWord = rawText.replaceAll("[^A-Z]", "");
 
                     if (cleanWord.isEmpty()) {
@@ -472,7 +632,10 @@ public class WriteActivity extends AppCompatActivity {
             SoundManager.getInstance(this).playClick();
             speechRecognizer.cancel();
             rawVoiceOutputBuffer = "";
+
+            tvVoiceStatus.setTextColor(Color.parseColor("#000000")); // Reset color to Black immediately
             tvVoiceStatus.setText("Listening again...");
+
             speechRecognizer.startListening(speechIntent);
         });
         voiceDialog.show();

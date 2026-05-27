@@ -195,18 +195,35 @@ public class MainActivity extends AppCompatActivity {
         btnMusicToggle.setOnClickListener(v -> {
             if (mediaPlayer == null) return;
 
-            if (isMusicOn) {
-                mediaPlayer.pause();
-                btnMusicToggle.setIconResource(android.R.drawable.ic_lock_silent_mode);
-                isMusicOn = false;
-                // SEPARATION FIX: Only target the background music layer; sound effects stay unmuted!
-                soundManager.setMusicOn(false);
-            } else {
-                mediaPlayer.start();
-                btnMusicToggle.setIconResource(android.R.drawable.ic_lock_silent_mode_off);
-                isMusicOn = true;
-                // SEPARATION FIX: Re-enable music layers
-                soundManager.setMusicOn(true);
+            try {
+                if (isMusicOn) {
+                    if (mediaPlayer.isPlaying()) {
+                        mediaPlayer.pause();
+                    }
+                    btnMusicToggle.setIconResource(android.R.drawable.ic_lock_silent_mode);
+                    isMusicOn = false;
+                    soundManager.setMusicOn(false);
+                } else {
+                    mediaPlayer.start();
+                    btnMusicToggle.setIconResource(android.R.drawable.ic_lock_silent_mode_off);
+                    isMusicOn = true;
+                    soundManager.setMusicOn(true);
+                }
+            } catch (IllegalStateException e) {
+                e.printStackTrace();
+                // Safe Fallback: Re-create the player frame if the native resource completely broke down
+                try {
+                    mediaPlayer.release();
+                    mediaPlayer = MediaPlayer.create(MainActivity.this, R.raw.menu_music);
+                    if (mediaPlayer != null) {
+                        mediaPlayer.setLooping(true);
+                        if (isMusicOn) {
+                            mediaPlayer.start();
+                        }
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
             }
         });
     }
@@ -430,8 +447,14 @@ public class MainActivity extends AppCompatActivity {
                 rationaleDialog.dismiss();
             }
 
-            if (isMusicOn && mediaPlayer != null && !mediaPlayer.isPlaying()) {
-                mediaPlayer.start();
+            if (isMusicOn && mediaPlayer != null) {
+                try {
+                    if (!mediaPlayer.isPlaying()) {
+                        mediaPlayer.start();
+                    }
+                } catch (IllegalStateException e) {
+                    e.printStackTrace();
+                }
             }
 
             Set<String> allProfiles = prefs.getStringSet("ALL_PROFILES", new HashSet<>());

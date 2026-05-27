@@ -1,6 +1,7 @@
 package com.example.letterland;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.media.SoundPool;
@@ -10,6 +11,7 @@ import android.os.Looper;
 public class SoundManager {
     private static SoundManager instance;
     private SoundPool soundPool;
+    private SharedPreferences audioPrefs;
 
     private int clickSoundId;
     private int shutterSoundId;
@@ -19,16 +21,19 @@ public class SoundManager {
 
     private MediaPlayer backgroundMusicPlayer;
     private boolean isSoundOn = true;
-    // SEPARATION FIX: Dedicated flag for background music streams
     private boolean isMusicOn = true;
 
     private final float NORMAL_MUSIC_VOLUME = 0.2f;
     private final float DUCKED_MUSIC_VOLUME = 0.05f;
 
-    // FIX: Single persistent UI main thread handler reference to prevent memory collection leaks
     private final Handler audioCleanupHandler = new Handler(Looper.getMainLooper());
 
     private SoundManager(Context context) {
+        // Core persistent storage initialization
+        audioPrefs = context.getSharedPreferences("LetterLandMemory", Context.MODE_PRIVATE);
+        this.isMusicOn = audioPrefs.getBoolean("PREF_MUSIC_ON", true);
+        this.isSoundOn = audioPrefs.getBoolean("PREF_SOUND_ON", true);
+
         AudioAttributes audioAttributes = new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -65,14 +70,14 @@ public class SoundManager {
         return instance;
     }
 
-    // GETTER: Expose music state to tracking activities
     public boolean isMusicOn() {
         return isMusicOn;
     }
 
-    // SETTER: Turns music on/off globally without touching sound effects flags
     public void setMusicOn(boolean musicOn) {
         this.isMusicOn = musicOn;
+        // Save state explicitly to disk
+        audioPrefs.edit().putBoolean("PREF_MUSIC_ON", musicOn).apply();
         if (!musicOn) {
             pauseBackgroundMusic();
         }
@@ -90,7 +95,6 @@ public class SoundManager {
         }
     }
 
-    // FIX: Patched native OpenSL ES asset cache buildup leak via explicit post-playback sample unloads
     public void playPhonicAsset(Context context, int resId) {
         if (!isSoundOn || resId == 0) return;
 
@@ -103,7 +107,6 @@ public class SoundManager {
 
                 audioCleanupHandler.postDelayed(() -> {
                     restoreBackgroundMusic();
-                    // CRITICAL FIX: Drops sound asset mapping indexes out of the hardware pool to stop audio muting crashes
                     soundPool.unload(sampleId);
                 }, 1200);
             } else {
@@ -126,7 +129,6 @@ public class SoundManager {
     }
 
     public void startBackgroundMusic() {
-        // SEPARATION FIX: Check isMusicOn instead of isSoundOn
         if (isMusicOn && backgroundMusicPlayer != null && !backgroundMusicPlayer.isPlaying()) {
             backgroundMusicPlayer.setVolume(NORMAL_MUSIC_VOLUME, NORMAL_MUSIC_VOLUME);
             backgroundMusicPlayer.start();
@@ -140,14 +142,12 @@ public class SoundManager {
     }
 
     public void duckBackgroundMusic() {
-        // SEPARATION FIX: Check isMusicOn instead of isSoundOn
         if (isMusicOn && backgroundMusicPlayer != null && !isFinishingMusicPlayer()) {
             backgroundMusicPlayer.setVolume(DUCKED_MUSIC_VOLUME, DUCKED_MUSIC_VOLUME);
         }
     }
 
     public void restoreBackgroundMusic() {
-        // SEPARATION FIX: Check isMusicOn instead of isSoundOn
         if (isMusicOn && backgroundMusicPlayer != null && !isFinishingMusicPlayer()) {
             backgroundMusicPlayer.setVolume(NORMAL_MUSIC_VOLUME, NORMAL_MUSIC_VOLUME);
         }
@@ -163,6 +163,7 @@ public class SoundManager {
 
     public void toggleSound(boolean soundOn) {
         isSoundOn = soundOn;
+        audioPrefs.edit().putBoolean("PREF_SOUND_ON", soundOn).apply();
         if (!isSoundOn) {
             pauseBackgroundMusic();
             stopScratchSound();
