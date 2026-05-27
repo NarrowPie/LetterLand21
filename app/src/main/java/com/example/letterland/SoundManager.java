@@ -19,6 +19,8 @@ public class SoundManager {
 
     private MediaPlayer backgroundMusicPlayer;
     private boolean isSoundOn = true;
+    // SEPARATION FIX: Dedicated flag for background music streams
+    private boolean isMusicOn = true;
 
     private final float NORMAL_MUSIC_VOLUME = 0.2f;
     private final float DUCKED_MUSIC_VOLUME = 0.05f;
@@ -61,6 +63,19 @@ public class SoundManager {
             instance = new SoundManager(context.getApplicationContext());
         }
         return instance;
+    }
+
+    // GETTER: Expose music state to tracking activities
+    public boolean isMusicOn() {
+        return isMusicOn;
+    }
+
+    // SETTER: Turns music on/off globally without touching sound effects flags
+    public void setMusicOn(boolean musicOn) {
+        this.isMusicOn = musicOn;
+        if (!musicOn) {
+            pauseBackgroundMusic();
+        }
     }
 
     public void playClick() {
@@ -111,7 +126,8 @@ public class SoundManager {
     }
 
     public void startBackgroundMusic() {
-        if (isSoundOn && backgroundMusicPlayer != null && !backgroundMusicPlayer.isPlaying()) {
+        // SEPARATION FIX: Check isMusicOn instead of isSoundOn
+        if (isMusicOn && backgroundMusicPlayer != null && !backgroundMusicPlayer.isPlaying()) {
             backgroundMusicPlayer.setVolume(NORMAL_MUSIC_VOLUME, NORMAL_MUSIC_VOLUME);
             backgroundMusicPlayer.start();
         }
@@ -124,13 +140,15 @@ public class SoundManager {
     }
 
     public void duckBackgroundMusic() {
-        if (isSoundOn && backgroundMusicPlayer != null && !isFinishingMusicPlayer()) {
+        // SEPARATION FIX: Check isMusicOn instead of isSoundOn
+        if (isMusicOn && backgroundMusicPlayer != null && !isFinishingMusicPlayer()) {
             backgroundMusicPlayer.setVolume(DUCKED_MUSIC_VOLUME, DUCKED_MUSIC_VOLUME);
         }
     }
 
     public void restoreBackgroundMusic() {
-        if (isSoundOn && backgroundMusicPlayer != null && !isFinishingMusicPlayer()) {
+        // SEPARATION FIX: Check isMusicOn instead of isSoundOn
+        if (isMusicOn && backgroundMusicPlayer != null && !isFinishingMusicPlayer()) {
             backgroundMusicPlayer.setVolume(NORMAL_MUSIC_VOLUME, NORMAL_MUSIC_VOLUME);
         }
     }

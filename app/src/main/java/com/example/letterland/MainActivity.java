@@ -73,6 +73,9 @@ public class MainActivity extends AppCompatActivity {
         prefs = getSharedPreferences("LetterLandMemory", MODE_PRIVATE);
         SoundManager soundManager = SoundManager.getInstance(this);
 
+        // SEPARATION FIX: Sync local music tracking state with global manager settings
+        isMusicOn = soundManager.isMusicOn();
+
         View layoutOnboarding = findViewById(R.id.layoutOnboarding);
         EditText etFirstPlayerName = findViewById(R.id.etFirstPlayerName);
         MaterialButton btnStartPlaying = findViewById(R.id.btnStartPlaying);
@@ -123,7 +126,10 @@ public class MainActivity extends AppCompatActivity {
         mediaPlayer = MediaPlayer.create(this, R.raw.menu_music);
         if (mediaPlayer != null) {
             mediaPlayer.setLooping(true);
-            mediaPlayer.start();
+            // SEPARATION FIX: Only auto-start menu music if it was not intentionally muted previously
+            if (isMusicOn) {
+                mediaPlayer.start();
+            }
         }
 
         MaterialButton btnPlay = findViewById(R.id.btnPlay);
@@ -132,6 +138,9 @@ public class MainActivity extends AppCompatActivity {
         com.google.android.material.imageview.ShapeableImageView btnAdmin = findViewById(R.id.btnAdmin);
         MaterialButton btnMusicToggle = findViewById(R.id.btnMusicToggle);
         MaterialCardView playerBadge = findViewById(R.id.playerBadgeCard);
+
+        // SEPARATION FIX: Ensure toggle button icon matches current saved state on initialization
+        btnMusicToggle.setIconResource(isMusicOn ? android.R.drawable.ic_lock_silent_mode_off : android.R.drawable.ic_lock_silent_mode);
 
         btnPlay.setOnClickListener(v -> {
             soundManager.playClick();
@@ -190,11 +199,14 @@ public class MainActivity extends AppCompatActivity {
                 mediaPlayer.pause();
                 btnMusicToggle.setIconResource(android.R.drawable.ic_lock_silent_mode);
                 isMusicOn = false;
-                soundManager.pauseBackgroundMusic();
+                // SEPARATION FIX: Only target the background music layer; sound effects stay unmuted!
+                soundManager.setMusicOn(false);
             } else {
                 mediaPlayer.start();
                 btnMusicToggle.setIconResource(android.R.drawable.ic_lock_silent_mode_off);
                 isMusicOn = true;
+                // SEPARATION FIX: Re-enable music layers
+                soundManager.setMusicOn(true);
             }
         });
     }

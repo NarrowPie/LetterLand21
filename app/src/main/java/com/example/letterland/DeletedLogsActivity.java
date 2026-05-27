@@ -92,7 +92,11 @@ public class DeletedLogsActivity extends AppCompatActivity {
             Glide.with(this).load(new File(imagePath)).into(ivRestoreImage);
         }
 
-        tvRestoreDetails.setText("Object: " + wordName + "\nPROFILE: " + profileName + "\nPROFILE: " + deleterName);
+        if (profileName.equals(deleterName)) {
+            tvRestoreDetails.setText("Object: " + wordName + "\nPROFILE: " + profileName);
+        } else {
+            tvRestoreDetails.setText("Object: " + wordName + "\nOWNER: " + profileName + "\nDELETED BY: " + deleterName);
+        }
 
         view.findViewById(R.id.btnCancelRestore).setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
@@ -116,7 +120,6 @@ public class DeletedLogsActivity extends AppCompatActivity {
                 db.wordDao().insert(restoredWord);
 
                 db.logDao().deleteLog(log);
-                db.logDao().insertLog(new LogEntry("PLAYER_LOG", "RESTORED_WORD|" + wordName + " for " + profileName, System.currentTimeMillis()));
 
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) return;

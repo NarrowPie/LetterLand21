@@ -243,6 +243,12 @@ public class WriteActivity extends AppCompatActivity {
                 return;
             }
 
+            // FIX: Prevent proceeding if the user hasn't drawn anything on the canvas yet
+            if (drawingView.getInk().getStrokes().isEmpty()) {
+                Toast.makeText(this, "Write clearly first!", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
             if (currentlyDetectedWord.isEmpty() || currentlyDetectedWord.equals("...")) {
                 Toast.makeText(this, "Write clearly first!", Toast.LENGTH_SHORT).show();
             } else {
@@ -415,53 +421,6 @@ public class WriteActivity extends AppCompatActivity {
         }
     }
 
-    private String getNormalizedTtsText(String text) {
-        if (text == null || text.trim().isEmpty()) {
-            return "";
-        }
-        String clean = text.trim();
-        if (clean.length() == 1) {
-            return mapIsolatedLetter(clean);
-        }
-        return clean.toLowerCase(Locale.US);
-    }
-
-    private String mapIsolatedLetter(String text) {
-        if (text == null || text.trim().length() != 1) {
-            return text;
-        }
-        String letter = text.trim().toUpperCase();
-        switch (letter) {
-            case "A": return "Ay";
-            case "B": return "Bee";
-            case "C": return "Cee";
-            case "D": return "Dee";
-            case "E": return "Ee";
-            case "F": return "Eff";
-            case "G": return "Gee";
-            case "H": return "Aitch";
-            case "I": return "Aye";
-            case "J": return "Jay";
-            case "K": return "Kay";
-            case "L": return "Ell";
-            case "M": return "Emm";
-            case "N": return "Enn";
-            case "O": return "Oh";
-            case "P": return "Pee";
-            case "Q": return "Cue";
-            case "R": return "Ar";
-            case "S": return "Ess";
-            case "T": return "Tee";
-            case "U": return "You";
-            case "V": return "Vee";
-            case "W": return "Double You";
-            case "X": return "Ex";
-            case "Y": return "Wye";
-            case "Z": return "Zed";
-            default: return text;
-        }
-    }
-
     private void showCustomVoiceDialog() {
         if (speechRecognizer == null) return;
         rawVoiceOutputBuffer = "";
@@ -502,8 +461,11 @@ public class WriteActivity extends AppCompatActivity {
             drawingView.setTracingWord(verifiedWord);
 
             if (isTtsReady) {
-                String spokenTarget = getNormalizedTtsText(verifiedWord);
-                textToSpeech.speak("Let's trace " + spokenTarget, TextToSpeech.QUEUE_FLUSH, null, "VOICE_TRACE_ID");
+                // MODIFIED: Changed from String to CharSequence to allow TtsSpans
+                CharSequence spokenTarget = getNormalizedTtsText(verifiedWord);
+                // MODIFIED: Concatenates cleanly via TextUtils to prevent formatting loss
+                CharSequence utterance = android.text.TextUtils.concat("Let's trace ", spokenTarget);
+                textToSpeech.speak(utterance, TextToSpeech.QUEUE_FLUSH, null, "VOICE_TRACE_ID");
             }
         });
         btnRetryVoice.setOnClickListener(v -> {
@@ -520,7 +482,8 @@ public class WriteActivity extends AppCompatActivity {
     }
 
     private void speakTextDirectly(String textToSpeak) {
-        String optimizedString = getNormalizedTtsText(textToSpeak);
+        // MODIFIED: References the dynamic CharSequence returned by getNormalizedTtsText
+        CharSequence optimizedString = getNormalizedTtsText(textToSpeak);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             AudioAttributes audioAttributes = new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
@@ -676,5 +639,32 @@ public class WriteActivity extends AppCompatActivity {
             databaseExecutor.shutdown();
         }
         super.onDestroy();
+    }
+
+    // MODIFIED: Changed return type from String to CharSequence to preserve Spanned metadata formatting
+    private CharSequence getNormalizedTtsText(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return "";
+        }
+        String clean = text.trim();
+        if (clean.length() == 1) {
+            return mapIsolatedLetter(clean);
+        }
+        return clean.toLowerCase(Locale.US);
+    }
+
+    // FIXED: Swapped out non-existent class "AlphabetBuilder" for the official system class "VerbatimBuilder"
+    private CharSequence mapIsolatedLetter(String text) {
+        if (text == null || text.trim().length() != 1) {
+            return text;
+        }
+        String letter = text.trim().toUpperCase();
+
+        android.text.SpannableString spannable = new android.text.SpannableString(letter);
+        android.text.style.TtsSpan alphabetSpan = new android.text.style.TtsSpan.VerbatimBuilder(letter)
+                .build();
+
+        spannable.setSpan(alphabetSpan, 0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return spannable;
     }
 }
