@@ -643,6 +643,10 @@ public class WriteActivity extends AppCompatActivity {
 
         btnCancelVoice.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
+            // Clear pending proceed requests if canceled
+            if (autoProceedRunnable != null) {
+                scanHandler.removeCallbacks(autoProceedRunnable);
+            }
             speechRecognizer.cancel();
             voiceDialog.dismiss();
         });
@@ -654,6 +658,15 @@ public class WriteActivity extends AppCompatActivity {
 
         btnRetryVoice.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
+
+            // ==========================================
+            // FIX: Kill the pending auto-proceed timer
+            // from the previous speech attempt!
+            // ==========================================
+            if (autoProceedRunnable != null) {
+                scanHandler.removeCallbacks(autoProceedRunnable);
+            }
+
             speechRecognizer.cancel();
             rawVoiceOutputBuffer = "";
 
@@ -662,6 +675,7 @@ public class WriteActivity extends AppCompatActivity {
 
             speechRecognizer.startListening(speechIntent);
         });
+
         voiceDialog.show();
         tvVoiceStatus.setText("Listening...");
 
