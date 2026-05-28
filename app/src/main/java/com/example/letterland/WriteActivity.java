@@ -623,6 +623,7 @@ public class WriteActivity extends AppCompatActivity {
 
     private void showCustomVoiceDialog() {
         if (speechRecognizer == null) return;
+        if (voiceDialog != null && voiceDialog.isShowing()) return;
         rawVoiceOutputBuffer = "";
         isVoiceInputActive = false;
 

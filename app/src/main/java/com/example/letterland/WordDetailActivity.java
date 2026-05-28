@@ -370,6 +370,10 @@ public class WordDetailActivity extends AppCompatActivity {
             WordEntry updatedEntry = new WordEntry(wordText, player, newImagePath);
             updatedEntry.isStarred = wasStarred;
 
+            if (oldEntry != null) {
+                updatedEntry.id = oldEntry.id;
+            }
+
             db.wordDao().insert(updatedEntry);
 
             runOnUiThread(() -> {

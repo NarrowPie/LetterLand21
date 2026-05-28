@@ -160,6 +160,9 @@ public class PlayActivity extends AppCompatActivity {
         btnBack.setOnClickListener(v -> finish());
 
         btnScan.setOnClickListener(v -> {
+
+            if (isScanningPaused) return;
+
             if (currentlyHighlightedWord.isEmpty()) {
                 Toast.makeText(this, "Line up a word in the box first!", Toast.LENGTH_SHORT).show();
                 return;

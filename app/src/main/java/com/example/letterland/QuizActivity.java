@@ -79,6 +79,7 @@ public class QuizActivity extends AppCompatActivity {
     private ProgressBar pbBumperLoading;
     private MaterialButton btnBumperStart;
     private boolean isFirstLevelLoaded = false;
+    private boolean isQuizProceedingLocked = false;
     private String targetSolutionWord = "";
     private char[] currentMaskedDisplayArray;
 
@@ -103,6 +104,7 @@ public class QuizActivity extends AppCompatActivity {
 
         btnBumperStart.setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
+            btnBumperStart.setEnabled(false);
             layoutBumper.animate()
                     .alpha(0f)
                     .setDuration(300)
@@ -214,11 +216,13 @@ public class QuizActivity extends AppCompatActivity {
 
         findViewById(R.id.btnQuizProceed).setOnClickListener(v -> {
             SoundManager.getInstance(this).playClick();
+            if (isQuizProceedingLocked) return;
 
             if (currentlyDetectedWord.isEmpty() || currentlyDetectedWord.equals("...")) {
                 Toast.makeText(this, "Please write an answer first!", Toast.LENGTH_SHORT).show();
                 return;
             }
+            isQuizProceedingLocked = true;
 
             showCustomConfirmDialog();
         });
@@ -458,11 +462,13 @@ public class QuizActivity extends AppCompatActivity {
 
         dialogView.findViewById(R.id.btnCancelConfirm).setOnClickListener(v1 -> {
             SoundManager.getInstance(this).playClick();
+            isQuizProceedingLocked = false;
             confirmDialog.dismiss();
         });
         dialogView.findViewById(R.id.btnYesConfirm).setOnClickListener(v1 -> {
             SoundManager.getInstance(this).playClick();
             confirmDialog.dismiss();
+            isQuizProceedingLocked = false;
 
             correctAnswers.add(quizWords.get(currentQuestionIndex).word);
             userAnswers.add(currentlyDetectedWord);
